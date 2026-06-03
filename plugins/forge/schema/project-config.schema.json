@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/connor-worthen4/forge/blob/main/plugins/forge/schema/project-config.schema.json",
+  "title": "Forge Project Config",
+  "description": "Per-repository .forge/config.yaml. The engine-vs-project seam: every pipeline phase and the runner read this at runtime. Project-agnostic.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "base_branch", "vcs", "commands"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Config schema version. Currently always 1."
+    },
+    "base_branch": {
+      "type": "string",
+      "minLength": 1,
+      "default": "develop",
+      "description": "Default branch PRs target and feature branches are cut from."
+    },
+    "protected_branches": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 },
+      "default": ["main", "master", "develop"],
+      "description": "Single source of truth for the git guardrail's protected list. The hook reads this (relative to cwd) before falling back to FORGE_PROTECTED_BRANCHES or its built-in default."
+    },
+    "vcs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host"],
+      "description": "Version control host and CLI used for PRs/MRs.",
+      "properties": {
+        "host": {
+          "type": "string",
+          "enum": ["github", "gitlab"],
+          "description": "VCS host."
+        },
+        "cli": {
+          "type": "string",
+          "enum": ["gh", "glab"],
+          "description": "CLI used by the integrate phase. Default derived from host (github->gh, gitlab->glab)."
+        },
+        "pr_target": {
+          "type": "string",
+          "minLength": 1,
+          "default": "develop",
+          "description": "Base/target branch for PRs (GitHub) or MRs (GitLab)."
+        }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test"],
+      "description": "How forge builds and checks THIS repo. Phases shell these out. Empty string means the phase skips that step.",
+      "properties": {
+        "build": { "type": "string", "default": "", "description": "Build/compile command." },
+        "test": { "type": "string", "default": "", "description": "Test command. Verify shells this. Required key; must be non-empty when code-changing task types are enabled." },
+        "lint": { "type": "string", "default": "", "description": "Lint command." },
+        "typecheck": { "type": "string", "default": "", "description": "Type-check command." }
+      }
+    },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional project specialization. Phases fall back to the generic engine behavior when these dirs are absent.",
+      "properties": {
+        "agents_dir": { "type": "string", "default": ".forge/agents", "description": "Directory of project-specific agent overrides." },
+        "skills_dir": { "type": "string", "default": ".forge/skills", "description": "Directory of project-specific skill overrides." }
+      }
+    },
+    "autonomy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How much the runner may do without a human.",
+      "properties": {
+        "default_tier": {
+          "type": "integer",
+          "enum": [0, 1, 2],
+          "default": 1,
+          "description": "0 read-only | 1 branch+PR | 2 gated (plan approval). Applied when a task spec does not set its own autonomy_tier."
+        },
+        "allow_unattended": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/taskType" },
+          "default": ["fix", "audit", "refactor", "chore"],
+          "description": "Task types the runner may process unattended (overnight)."
+        },
+        "require_gate": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/taskType" },
+          "default": ["build"],
+          "description": "Task types forced to tier-2 plan approval regardless of their own tier."
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Cost and concurrency controls the runner honors.",
+      "properties": {
+        "nightly_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Runner stops launching NEW tasks once cumulative night spend reaches this."
+        },
+        "monthly_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Soft monthly cap. Set BELOW your account credit ceiling so forge throttles itself rather than getting cut off mid-build."
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 2,
+          "description": "Per (task, phase) retries before the task is blocked/failed. Caps the verify->build and review->build loops."
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Max parallel headless sessions. Git-touching work is ALWAYS serialized regardless of this value."
+        },
+        "models": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Phase -> model. Passed as --model to `claude -p` for that phase.",
+          "properties": {
+            "intake": { "$ref": "#/$defs/modelRef" },
+            "plan": { "$ref": "#/$defs/modelRef" },
+            "build": { "$ref": "#/$defs/modelRef" },
+            "verify": { "$ref": "#/$defs/modelRef" },
+            "review": { "$ref": "#/$defs/modelRef" },
+            "integrate": { "$ref": "#/$defs/modelRef" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "taskType": {
+      "type": "string",
+      "enum": ["fix", "build", "audit", "refactor", "investigate", "chore"]
+    },
+    "modelRef": {
+      "type": "string",
+      "description": "A Claude Code model alias or a pinned full model name. Aliases verified from official docs: default, best, opus, sonnet, haiku, opusplan, opus[1m], sonnet[1m]. Full strings like claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5-20251001 (optional [1m] suffix on opus/sonnet).",
+      "anyOf": [
+        { "enum": ["default", "best", "opus", "sonnet", "haiku", "opusplan", "opus[1m]", "sonnet[1m]"] },
+        { "pattern": "^claude-(opus|sonnet|haiku)-[0-9][0-9A-Za-z.-]*(\\[1m\\])?$" }
+      ]
+    }
+  }
+}
