@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "forge",
+  "displayName": "Forge",
+  "version": "0.1.0",
+  "description": "Raw task in, tempered PR out — an agentic software factory for Claude Code, portable across any repo.",
+  "author": {
+    "name": "connor-worthen4"
+  },
+  "repository": "https://github.com/connor-worthen4/forge",
+  "license": "MIT",
+  "keywords": [
+    "agentic",
+    "pipeline",
+    "automation",
+    "software-factory",
+    "code-review"
+  ]
+}
