@@ -34,3 +34,6 @@ build/
 # Claude Code local caches and personal settings
 .claude/settings.local.json
 .claude/.cache/
+
+# Forge runtime state (per target project): run records and queue index
+.forge/
