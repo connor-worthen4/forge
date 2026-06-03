@@ -97,6 +97,17 @@
         }
       }
     },
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional outbound notifications from the unattended runner.",
+      "properties": {
+        "discord_webhook": {
+          "type": "string",
+          "description": "Discord webhook URL the runner posts its end-of-run summary to. May also be set via FORGE_DISCORD_WEBHOOK."
+        }
+      }
+    },
     "budget": {
       "type": "object",
       "additionalProperties": false,
