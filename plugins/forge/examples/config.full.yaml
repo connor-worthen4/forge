@@ -1,0 +1,51 @@
+# Full, annotated forge project config (.forge/config.yaml).
+# This file is the engine-vs-project seam: every pipeline phase and the runner
+# read it at runtime. Keep it project-specific; the engine stays generic.
+
+version: 1
+
+# Default branch feature branches are cut from and PRs target.
+base_branch: develop
+
+# Source of truth for the git guardrail's protected list. The guardrail hook
+# reads this first (relative to cwd), then FORGE_PROTECTED_BRANCHES, then its
+# built-in default of [main, master, develop].
+protected_branches: [main, master, develop]
+
+vcs:
+  host: github          # github | gitlab
+  cli: gh               # gh | glab (default derived from host)
+  pr_target: develop    # base/target branch for PRs (GitHub) / MRs (GitLab)
+
+# How forge builds and checks THIS repo. Phases shell these out; an empty
+# string means the phase skips that step. The verify phase runs `test`.
+commands:
+  build: "npm run build"
+  test: "npm test"
+  lint: "npm run lint"
+  typecheck: "npm run typecheck"
+
+# Optional project specialization. Phases fall back to the generic engine
+# behavior when these directories are absent.
+overrides:
+  agents_dir: .forge/agents
+  skills_dir: .forge/skills
+
+autonomy:
+  default_tier: 1                                 # 0 read-only | 1 branch+PR | 2 gated
+  allow_unattended: [fix, audit, refactor, chore] # task types the runner may process overnight
+  require_gate: [build]                           # task types forced to tier-2 plan approval
+
+budget:
+  nightly_usd: 3.00     # runner stops launching NEW tasks once cumulative night spend hits this
+  monthly_usd: 90.00    # soft monthly cap; set BELOW your Anthropic credit ceiling
+  max_attempts: 2       # per (task, phase) retries before the task is blocked/failed
+  concurrency: 1        # max parallel headless sessions; git-touching work is ALWAYS serialized
+  models:               # phase -> model alias (verified) or pinned full string
+    intake: haiku
+    plan: sonnet
+    build: sonnet
+    verify: haiku
+    review: sonnet
+    integrate: haiku
+    # opus is reserved for explicit tier-2 overrides, never a phase default at this budget.
