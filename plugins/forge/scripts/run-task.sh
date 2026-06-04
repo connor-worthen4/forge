@@ -68,7 +68,7 @@ rd = sys.argv[1]
 p = os.path.join(rd, "run.json")
 d = json.load(open(p)) if os.path.exists(p) else {}
 m = {}
-for key, fn in [("intake", "intake.md"), ("plan", "plan.md"), ("diff", "diff.patch"),
+for key, fn in [("intake", "context-brief.md"), ("plan", "plan.md"), ("diff", "diff.patch"),
                 ("verdict", "verify.md"), ("review", "review.md"), ("report", "report.md"),
                 ("pr", "pr.json"), ("transcript", "transcript.log")]:
     fp = os.path.join(rd, fn)

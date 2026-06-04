@@ -11,6 +11,10 @@
 #   claude -p "<prompt>" --output-format json --json-schema '<schema>' \
 #          --model <config.budget.models[phase]> --dangerously-skip-permissions
 # (No --bare: the forge guardrail hook must stay active during the run.)
+# Before launching, the phase's task context is exported as environment vars
+# (FORGE_TASK_ID, FORGE_PHASE, FORGE_SPEC_FILE, FORGE_RUN_DIR, FORGE_CONFIG,
+# FORGE_TARGET_REPO, FORGE_PLUGIN_DIR, FORGE_ARTIFACT) so the self-contained
+# prompt can locate the spec/config/repo it must ground itself in.
 # The structured result is read from `.structured_output` and the cost from
 # `.total_cost_usd` (verified flag/field names from the Claude Code docs).
 #
@@ -48,7 +52,7 @@ model="$(config_get "budget.models.$phase" "")"
 
 # Artifact file name per phase.
 case "$phase" in
-  intake)    artifact="intake.md" ;;
+  intake)    artifact="context-brief.md" ;;
   plan)      artifact="plan.md" ;;
   build)     artifact="diff.patch" ;;
   verify)    artifact="verify.md" ;;
@@ -108,6 +112,20 @@ print(json.dumps({
 }))' "$status" "$artifact" "$reason" "$cost")"
 else
   # ---- real mode ----
+  # Resolve the task spec (same rule the driver uses) and export the phase's
+  # task context so the self-contained prompt can ground itself in the real
+  # spec/config/repo. claude inherits these in the cd subshell below.
+  spec_file="$(queue_get "$task_id" file "")"
+  if [ -z "$spec_file" ] || [ ! -f "$spec_file" ]; then spec_file="$TARGET/tasks/$task_id.md"; fi
+  export FORGE_TASK_ID="$task_id"
+  export FORGE_PHASE="$phase"
+  export FORGE_SPEC_FILE="$spec_file"
+  export FORGE_RUN_DIR="$run_dir"
+  export FORGE_CONFIG="$CONFIG"
+  export FORGE_TARGET_REPO="$TARGET"
+  export FORGE_PLUGIN_DIR="$PLUGIN_DIR"
+  export FORGE_ARTIFACT="$artifact"
+
   prompt="$(cat "$prompt_file")"
   raw="$(cd "$TARGET" && claude -p "$prompt" \
       --output-format json \
