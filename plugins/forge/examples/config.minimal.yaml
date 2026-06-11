@@ -1,0 +1,9 @@
+# Minimal forge project config: only the required fields.
+# Everything else falls back to the documented engine defaults
+# (see plugins/forge/docs/project-config.md).
+version: 1
+base_branch: develop
+vcs:
+  host: github
+commands:
+  test: "npm test"

@@ -14,6 +14,9 @@
 # authoritative control (GitHub branch protection) are documented in README.md.
 #
 # Input:  PreToolUse JSON on stdin (tool_name, tool_input.command, cwd).
+# Source: protected branches resolve from .forge/config.yaml (relative to cwd) >
+#         FORGE_PROTECTED_BRANCHES env > the hardcoded default. The config file is
+#         the single source of truth (same field validate-config.sh checks).
 # Deps:   jq, grep, awk, git (POSIX bash; written to run under bash 3.2+).
 # Speed:  no network; a single `git rev-parse` only when a decision needs the
 #         current branch.
@@ -21,7 +24,9 @@
 set -u
 
 INTEGRATION_BRANCH="${FORGE_INTEGRATION_BRANCH:-develop}"
-PROTECTED_CSV="${FORGE_PROTECTED_BRANCHES:-main,master,develop}"
+DEFAULT_PROTECTED="main,master,develop"
+# Resolved after the hook cwd is known; see resolve_protected.
+PROTECTED_CSV=""
 PR_HINT="forge agents must open a PR into ${INTEGRATION_BRANCH} and let a human review and merge."
 
 # --- jq guard ---------------------------------------------------------------
@@ -60,10 +65,61 @@ is_protected() {
   local IFS=','
   local p
   for p in $PROTECTED_CSV; do
-    p="$(trim "$p")"
+    p="$(unquote "$(trim "$p")")"
     [ -n "$p" ] && [ "$b" = "$p" ] && return 0
   done
   return 1
+}
+
+# Read a top-level protected_branches list from a .forge/config.yaml using only
+# awk (no YAML dependency in the hot path). Handles both inline flow lists
+# (protected_branches: [a, b]) and block lists. Prints a comma-separated list, or
+# nothing when the key is absent or empty. Quote stripping is left to is_protected.
+read_config_protected() {
+  local cfg="$1"
+  [ -f "$cfg" ] || return 0
+  awk '
+    /^protected_branches:[ \t]*\[/ {
+      line = $0
+      sub(/#.*/, "", line)
+      sub(/^[^[]*\[/, "", line)
+      sub(/\].*$/, "", line)
+      gsub(/[ \t]/, "", line)
+      print line
+      exit
+    }
+    /^protected_branches:[ \t]*$/ { inblock = 1; next }
+    inblock == 1 {
+      if ($0 ~ /^[ \t]+-[ \t]*/) {
+        item = $0
+        sub(/#.*/, "", item)
+        sub(/^[ \t]+-[ \t]*/, "", item)
+        gsub(/[ \t]/, "", item)
+        if (item != "") { out = (out == "") ? item : out "," item }
+        next
+      }
+      if ($0 ~ /^[^ \t]/) { inblock = 0; print out; exit }
+    }
+    END { if (inblock == 1) print out }
+  ' "$cfg" 2>/dev/null
+}
+
+# Resolve the protected-branch list in priority order: .forge/config.yaml
+# (relative to the hook cwd) wins, then FORGE_PROTECTED_BRANCHES, then the
+# hardcoded default. An empty or absent config list falls through, so the
+# default still protects (fail safe).
+resolve_protected() {
+  local from_cfg=""
+  if [ -n "${CWD:-}" ] && [ -f "${CWD}/.forge/config.yaml" ]; then
+    from_cfg="$(read_config_protected "${CWD}/.forge/config.yaml")"
+  fi
+  if [ -n "$from_cfg" ]; then
+    PROTECTED_CSV="$from_cfg"
+  elif [ -n "${FORGE_PROTECTED_BRANCHES:-}" ]; then
+    PROTECTED_CSV="$FORGE_PROTECTED_BRANCHES"
+  else
+    PROTECTED_CSV="$DEFAULT_PROTECTED"
+  fi
 }
 
 # Emit a structured PreToolUse deny and exit. Exit 0 so the JSON decision on
@@ -380,6 +436,9 @@ TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')"
 COMMAND="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')"
 CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty')"
 [ -n "$COMMAND" ] || exit 0
+
+# Resolve protected branches now that the cwd (and thus any .forge/config.yaml) is known.
+resolve_protected
 
 # Split chained commands on && || ; | and newlines so a blocked op cannot hide
 # inside a chain. awk is used because BSD sed does not expand \n in replacements.

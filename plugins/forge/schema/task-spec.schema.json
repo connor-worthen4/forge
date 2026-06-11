@@ -79,6 +79,15 @@
       "minLength": 1,
       "description": "Branch the eventual PR targets. Defaults to the project base (develop)."
     },
+    "depends_on": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(fix|build|audit|refactor|investigate|chore)-[0-9A-Za-z]{6,26}$"
+      },
+      "description": "Task ids that must reach status 'done' before this task becomes selectable by the runner."
+    },
     "source": {
       "type": "object",
       "description": "Provenance of the task.",
