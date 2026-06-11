@@ -44,7 +44,7 @@ else
 fi
 
 # The runner's result schema (kept in sync with run-phase.sh).
-RESULT_SCHEMA='{"type":"object","additionalProperties":false,"required":["status"],"properties":{"status":{"enum":["ok","blocked","fail"]},"next_phase":{"type":["string","null"]},"artifacts":{"type":"array","items":{"type":"string"}},"blocked_reason":{"type":["string","null"]},"cost_usd":{"type":["number","null"]}}}'
+RESULT_SCHEMA='{"type":"object","additionalProperties":false,"required":["status","next_phase","artifacts","blocked_reason","cost_usd"],"properties":{"status":{"enum":["ok","blocked","fail"]},"next_phase":{"type":["string","null"]},"artifacts":{"type":"array","items":{"type":"string"}},"blocked_reason":{"type":["string","null"]},"cost_usd":{"type":["number","null"]}}}'
 
 PASS=0
 FAIL=0

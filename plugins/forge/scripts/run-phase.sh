@@ -63,7 +63,7 @@ case "$phase" in
 esac
 
 # Structured-result schema enforced via --json-schema.
-result_schema='{"type":"object","additionalProperties":false,"required":["status"],"properties":{"status":{"enum":["ok","blocked","fail"]},"next_phase":{"type":["string","null"]},"artifacts":{"type":"array","items":{"type":"string"}},"blocked_reason":{"type":["string","null"]},"cost_usd":{"type":["number","null"]}}}'
+result_schema='{"type":"object","additionalProperties":false,"required":["status","next_phase","artifacts","blocked_reason","cost_usd"],"properties":{"status":{"enum":["ok","blocked","fail"]},"next_phase":{"type":["string","null"]},"artifacts":{"type":"array","items":{"type":"string"}},"blocked_reason":{"type":["string","null"]},"cost_usd":{"type":["number","null"]}}}'
 
 cost=0
 result=""
@@ -134,7 +134,7 @@ else
       --dangerously-skip-permissions 2>"$run_dir/$phase.stderr.log")" || true
   printf '%s\n' "$raw" > "$run_dir/$phase.transcript.json"
   cost="$(printf '%s' "$raw" | jq -r '(.total_cost_usd // 0)' 2>/dev/null || echo 0)"
-  result="$(printf '%s' "$raw" | jq -c '(.structured_output // {"status":"fail","next_phase":null,"artifacts":[],"blocked_reason":"no structured_output in claude result"})' 2>/dev/null || echo '{"status":"fail","blocked_reason":"unparseable claude result"}')"
+  result="$(printf '%s' "$raw" | jq -c '(.structured_output // {"status":"fail","next_phase":null,"artifacts":[],"blocked_reason":"no structured_output in claude result"})' 2>/dev/null || echo '{"status":"fail","next_phase":null,"artifacts":[],"blocked_reason":"unparseable claude result"}')"
 fi
 
 # Accumulate spend.
