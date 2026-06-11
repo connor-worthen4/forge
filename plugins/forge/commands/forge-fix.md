@@ -30,7 +30,7 @@ Do exactly the following, then STOP and wait for the user:
    `tasks/<task-id>.md`). Note its `type`, effective `autonomy_tier`, and
    `acceptance_criteria`. Derive the pipeline shape exactly as `run-task.sh` does:
    - `audit`/`investigate` -> tier 0: intake -> plan -> report.md -> done (read-only; no branch/PR).
-   - `build` or any type in `autonomy.require_gate` -> tier 2: intake -> plan -> plan_gate (stop for the user's approval).
+   - `build` or any type in `autonomy.require_gate` -> tier 2: intake -> plan -> plan_gate (stop for the user's approval via /forge-approve). If the run record already shows the gate was passed (status `building` or later), continue the tier-1 path from that phase instead of re-planning.
    - otherwise -> tier 1: intake -> plan -> build -> verify -> review -> integrate -> pr_open.
 
 4. **Execute the pipeline in-session, one phase at a time.** For each phase, read

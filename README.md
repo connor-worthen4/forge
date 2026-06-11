@@ -15,10 +15,11 @@ Working pipeline skeleton (pre-v1). Implemented so far:
 - Git-safety guardrail: a PreToolUse hook that blocks merges and pushes to protected branches, sourcing the protected list from the target repo's config.
 - Runner: phase executor, pipeline state-machine driver, unattended loop (`forge-run.sh --all`), next-task selector, and PR-merge detection (`pr_open` to `done`).
 - Phases: all seven phases (`intake`, `plan`, `build`, `verify`, `review`, `integrate`, `report`) have real prompts sharing the same discipline: grounded `path:line` evidence, a fixed artifact format per phase, and a common JSON result contract. Stub mode (canned results, no model calls) remains available for state-machine testing.
-- Commands: `/forge-status` and the interactive `/forge-fix` driver.
-- Tests: a unit suite for the guardrail hook and an end-to-end harness for the intake phase (real and stub modes).
+- Plan gate: tier-2 tasks park at `plan_gate`; `/forge-approve` (or `scripts/approve-plan.sh`) approves the plan into the build loop or sends feedback back into a re-plan.
+- Commands: `/forge-status`, the interactive `/forge-fix` driver, and `/forge-approve`.
+- Tests: unit suites for the guardrail hook, `config_get`, and the plan-gate lifecycle, plus an end-to-end harness for the intake phase (real and stub modes).
 
-Next up: an approval path for tier-2 `plan_gate` tasks, then a first run against a fresh target repository.
+Next up: a first run against a fresh target repository.
 
 ## How a task flows
 
@@ -26,7 +27,7 @@ Next up: an approval path for tier-2 `plan_gate` tasks, then a first run against
 2. The runner picks the next task and derives the pipeline shape from its type:
    - `audit` / `investigate` — tier 0, read-only: intake, plan, report. No branch, no PR.
    - `fix` / `refactor` / `chore` — tier 1, linear: intake, plan, build, verify, review, integrate, ending at an open PR.
-   - `build` — tier 2, gated: stops after plan for human approval before any code is written.
+   - `build` — tier 2, gated: stops after plan for human approval before any code is written. `/forge-approve <task-id>` resumes it into the tier-1 loop; `/forge-approve <task-id> changes: <feedback>` triggers a re-plan.
 3. Each phase runs in an isolated context, reads the prior phases' artifacts from `.forge/runs/<task-id>/`, and files its own artifact (context brief, plan, diff, verdicts, PR record).
 4. Failed verify or review loops back to build, capped by the configured attempt budget.
 5. The pipeline ends at `pr_open`. A human reviews and merges; the next sync flips the task to `done`.
@@ -101,8 +102,10 @@ claude plugin validate ./plugins/forge --strict
 Run the test suites:
 
 ```
-plugins/forge/hooks/test/run-tests.sh          # guardrail hook unit tests
-plugins/forge/phases/test/run-intake-tests.sh  # intake phase end to end
+plugins/forge/hooks/test/run-tests.sh             # guardrail hook unit tests
+plugins/forge/scripts/test/run-tests.sh           # config_get unit tests
+plugins/forge/scripts/test/run-approval-tests.sh  # plan-gate lifecycle (stub mode)
+plugins/forge/phases/test/run-intake-tests.sh     # intake phase end to end
 ```
 
 ## Branches

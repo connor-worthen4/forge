@@ -255,6 +255,13 @@ drive_tier1() {
 
 case "$tier" in
   0) drive_tier0 "$start" ;;
-  2) drive_tier2 "$start" ;;
+  2)
+    # Once the human approves the plan (approve-plan.sh moves the task to
+    # building), a tier-2 task runs the same loop as tier 1 from that point.
+    case "$start" in
+      build|verify|review|integrate) drive_tier1 "$start" ;;
+      *) drive_tier2 "$start" ;;
+    esac
+    ;;
   *) drive_tier1 "$start" ;;
 esac

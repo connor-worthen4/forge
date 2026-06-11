@@ -30,6 +30,12 @@ them, then read your inputs. Do this with real tool calls:
    `base_branch`, and `autonomy.*`).
 4. Read the context brief at `FORGE_RUN_DIR/context-brief.md`. It records the
    effective tier, whether a plan gate applies, and the located context map.
+5. Check for `FORGE_RUN_DIR/plan-feedback.md`. If it exists, this is a RE-PLAN:
+   a human reviewed your previous plan at the gate and requested changes. The
+   feedback is your primary input - address every point of it in the revised
+   plan, and record how in a `## Feedback addressed` section. Do not silently
+   ignore a point you disagree with; if one is genuinely impossible, BLOCK and
+   say why.
 
 If the spec or the context brief is unreadable, return `fail`. If the brief is
 missing entirely, that is a runner sequencing error: also `fail`.
