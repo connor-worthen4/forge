@@ -8,7 +8,7 @@ You are the interactive driver for the forge pipeline. You run in the user's liv
 session (drawing their subscription), so you execute the pipeline IN-SESSION using
 subagents for phase isolation. Do NOT launch headless `claude -p` sessions and do
 NOT pass `--dangerously-skip-permissions`. You and the unattended runner
-(`forge run --all`) share the same `select-next`, the same `.forge/queue.json`, and
+(`scripts/forge-run.sh --all`) share the same `select-next`, the same `.forge/queue.json`, and
 the same `.forge/runs/<task_id>/` records, so you never redo each other's work.
 
 The forge scripts live at `${CLAUDE_PLUGIN_ROOT}/scripts`. The target repo is the
