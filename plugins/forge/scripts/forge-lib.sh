@@ -38,7 +38,7 @@ for part in key.split('.'):
         cur = cur[part]
     else:
         print(default); sys.exit(0)
-print(json.dumps(cur) if isinstance(cur, (dict, list)) else cur)
+print(json.dumps(cur) if isinstance(cur, (dict, list)) else (cur if cur != "" else default))
 PY
 }
 
