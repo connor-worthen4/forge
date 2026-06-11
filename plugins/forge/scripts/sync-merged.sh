@@ -29,7 +29,8 @@ print("\n".join(t["task_id"] for t in tasks if t.get("status") == "pr_open"))' "
 fake=",${FORGE_FAKE_MERGED:-},"
 changed=0
 
-for id in $ids; do
+while IFS= read -r id; do
+  [ -n "$id" ] || continue
   merged=0
   if printf '%s' "$fake" | grep -q ",$id,"; then
     merged=1
@@ -46,7 +47,7 @@ for id in $ids; do
     echo "merged: $id -> done"
     changed=$((changed + 1))
   fi
-done
+done <<< "$ids"
 
 [ "$changed" = 0 ] && echo "sync-merged: no pr_open tasks newly merged"
 exit 0

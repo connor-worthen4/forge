@@ -18,8 +18,27 @@ QUEUE="$FORGE_DIR/queue.json"
 SPEND="$FORGE_DIR/spend.json"
 RUNS_DIR="$FORGE_DIR/runs"
 
+# Fail fast with a clear message when a required command is missing.
+#   forge_require <cmd>...
+forge_require() {
+  local c
+  for c in "$@"; do
+    if ! command -v "$c" >/dev/null 2>&1; then
+      printf 'forge: required command not found: %s\n' "$c" >&2
+      return 1
+    fi
+  done
+}
+
+# Every helper below shells out to python3 or jq; check once at source time so
+# each runner script aborts with one clear line instead of a mid-pipeline
+# command-not-found.
+forge_require jq python3 || exit 2
+
 # Read a dotted key from the project config. Scalars print as-is; objects/arrays
-# print as JSON. Missing key prints the default.
+# print as JSON. Missing key prints the default. An empty-string value is
+# deliberately coerced to the default too (a blank config line means "unset",
+# never "override with nothing").
 #   config_get <dotted.key> [default]
 config_get() {
   local key="$1" def="${2:-}"
@@ -63,6 +82,17 @@ if m and yaml:
 v = data.get(key, default)
 print(json.dumps(v) if isinstance(v, (dict, list)) else (v if v is not None else default))
 PY
+}
+
+# Resolve a task's spec file: the queue entry's `file` key when it points at an
+# existing file, else the conventional tasks/<task-id>.md under the target repo.
+# Prints the path; the caller checks existence.
+#   spec_path <task_id>
+spec_path() {
+  local f
+  f="$(queue_get "$1" file "")"
+  if [ -z "$f" ] || [ ! -f "$f" ]; then f="$TARGET/tasks/$1.md"; fi
+  printf '%s' "$f"
 }
 
 # Read a field from a queue entry.

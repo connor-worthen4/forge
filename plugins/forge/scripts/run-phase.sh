@@ -95,6 +95,8 @@ except Exception:
   # Write the phase artifact (echo the role).
   if [ "$phase" = "integrate" ]; then
     short="$(printf '%s' "$task_id" | cksum | cut -d' ' -f1)"
+    # "${short: -4}" is the last four digits; the space before -4 is required
+    # to distinguish the negative offset from the ${var:-default} form.
     printf '{"pr_url": "https://github.com/example/repo/pull/%s"}\n' "${short: -4}" > "$run_dir/$artifact"
   else
     printf '[stub %s] %s\n' "$phase" "${role:-Role: (none)}" > "$run_dir/$artifact"
@@ -115,8 +117,7 @@ else
   # Resolve the task spec (same rule the driver uses) and export the phase's
   # task context so the self-contained prompt can ground itself in the real
   # spec/config/repo. claude inherits these in the cd subshell below.
-  spec_file="$(queue_get "$task_id" file "")"
-  if [ -z "$spec_file" ] || [ ! -f "$spec_file" ]; then spec_file="$TARGET/tasks/$task_id.md"; fi
+  spec_file="$(spec_path "$task_id")"
   export FORGE_TASK_ID="$task_id"
   export FORGE_PHASE="$phase"
   export FORGE_SPEC_FILE="$spec_file"
@@ -134,7 +135,7 @@ else
       --dangerously-skip-permissions 2>"$run_dir/$phase.stderr.log")" || true
   printf '%s\n' "$raw" > "$run_dir/$phase.transcript.json"
   cost="$(printf '%s' "$raw" | jq -r '(.total_cost_usd // 0)' 2>/dev/null || echo 0)"
-  result="$(printf '%s' "$raw" | jq -c '(.structured_output // {"status":"fail","next_phase":null,"artifacts":[],"blocked_reason":"no structured_output in claude result"})' 2>/dev/null || echo '{"status":"fail","next_phase":null,"artifacts":[],"blocked_reason":"unparseable claude result"}')"
+  result="$(printf '%s' "$raw" | jq -c '(.structured_output // {"status":"fail","next_phase":null,"artifacts":[],"blocked_reason":"no structured_output in claude result","cost_usd":null})' 2>/dev/null || echo '{"status":"fail","next_phase":null,"artifacts":[],"blocked_reason":"unparseable claude result","cost_usd":null}')"
 fi
 
 # Accumulate spend.
