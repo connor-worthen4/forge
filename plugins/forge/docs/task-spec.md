@@ -9,7 +9,8 @@ simple; getting it wrong leaks complexity downstream.
 
 This contract is project-agnostic. Nothing here is specific to any single target
 repository; project-specific configuration lives in each target repo's
-`.claude/`, not in this schema.
+`.forge/config.yaml` (see [project-config.md](project-config.md)), not in this
+schema.
 
 There are two distinct objects:
 
@@ -64,6 +65,7 @@ The frontmatter validates against [`schema/task-spec.schema.json`](../schema/tas
 | `context_refs` | list of strings            | **Pointers** to read: paths, URLs, related PRs. Never inline the content itself, only references to it. |
 | `priority`     | enum                       | `P0`, `P1`, `P2`, `P3` (queue ordering; lower number is more urgent). |
 | `base_branch`  | string                     | Branch the eventual PR targets. Defaults to the project's configured base (`develop`); override per task here. |
+| `depends_on`   | list of task ids           | Task ids that must reach status `done` before this task becomes selectable by the runner. |
 | `source`       | object `{kind, ref}`       | Provenance. `kind` is one of `cli`, `file`, `issue`, `notion`, `slack`, `email`, `api`, `other`; `ref` is the originating URL, path, or id. |
 
 The body (everything after the closing `---`) is the free-form prose
@@ -79,14 +81,18 @@ produces in the same directory:
 
 ```
 .forge/
-  queue.json                      # ingested queue: [{task_id, priority, status}]
+  queue.json                      # ingested queue: [{task_id, type, priority, status, depends_on, file}]
   runs/
     <task-id>/
       run.json                    # the run record (this object)
+      context-brief.md            # produced by intake
       plan.md                     # produced by plan
       diff.patch                  # produced by build
-      verdict.md                  # produced by verify / review
-      transcript/                 # captured agent transcript(s)
+      verify.md                   # produced by verify
+      review.md                   # produced by review
+      report.md                   # produced by report (tier 0)
+      pr.json                     # produced by integrate
+      transcript.log              # phase-by-phase execution log
 ```
 
 The run record validates against [`schema/run-record.schema.json`](../schema/run-record.schema.json).
@@ -96,11 +102,11 @@ The run record validates against [`schema/run-record.schema.json`](../schema/run
 | `task_id`       | string                       | The `id` of the spec this run executes. |
 | `attempt_n`     | integer (>= 1)               | Which attempt this is for the task. |
 | `status`        | enum                         | Current state-machine state (see below). |
-| `current_phase` | enum                         | Coarse pipeline phase: `intake`, `plan`, `build`, `verify`, `review`, `integrate`. |
+| `current_phase` | enum                         | Coarse pipeline phase: `intake`, `plan`, `build`, `verify`, `review`, `integrate`, `report`. |
 | `branch_name`   | string or null               | Working branch (`forge/<type>/<id>-<slug>`); null for tier-0 read-only runs. |
 | `pr_url`        | string (uri) or null         | The opened PR, once integrate has run; null otherwise. |
 | `verdict`       | object or null               | `{ result: pass|fail, reasons: [string] }` from verify/review. |
-| `artifacts`     | object (name -> path)         | Known keys `plan`, `diff`, `verdict`, `transcript`; additional paths allowed. |
+| `artifacts`     | object (name -> path)         | Known keys `intake`, `plan`, `diff`, `verdict`, `review`, `report`, `pr`, `transcript`; additional paths allowed. |
 | `error`         | object or null               | `{ message, phase? }` when a phase errors. |
 | `created_at`    | string (date-time)           | Run creation timestamp (ISO 8601). |
 | `updated_at`    | string (date-time)           | Last update timestamp (ISO 8601). |
@@ -116,8 +122,9 @@ cares about. Mapping:
 | `build`         | `building` |
 | `verify`        | `verifying` |
 | `review`        | `reviewing` |
-| `integrate`     | `integrating` |
-| (terminal)      | `done`, `failed` |
+| `integrate`     | `integrating`, `pr_open` |
+| `report`        | `planning` (tier-0 report in progress) |
+| (terminal)      | `done`, `failed` - `current_phase` keeps its last value (`integrate` for tiers 1-2, `report` for tier 0) |
 | (pause)         | `blocked` |
 
 ---
@@ -138,7 +145,8 @@ stateDiagram-v2
     verifying --> building: checks fail (loop)
     reviewing --> integrating: review passes
     reviewing --> building: review fails (loop)
-    integrating --> done: PR opened into base
+    integrating --> pr_open: PR opened into base (forge never merges)
+    pr_open --> done: human merges; the next sync detects it
     done --> [*]
 
     pending --> blocked
@@ -179,22 +187,26 @@ stateDiagram-v2
 | `verifying`   | `building`    | Checks fail; loop back to build                       | 1, 2    |
 | `reviewing`   | `integrating` | Review passes                                         | 1, 2    |
 | `reviewing`   | `building`    | Review fails; loop back to build                      | 1, 2    |
-| `integrating` | `done`        | PR opened into `base_branch` (forge never merges)     | 1, 2    |
+| `integrating` | `pr_open`     | PR opened into the base branch (forge never merges)   | 1, 2    |
+| `pr_open`     | `done`        | A human merged the PR; the next sync detects it       | 1, 2    |
 | any phase     | `blocked`     | Needs a human decision, credential, or access         | 0, 1, 2 |
 | `blocked`     | active phase  | Human unblocked; resume the phase it paused in        | 0, 1, 2 |
 | any phase     | `failed`      | Unrecoverable error                                   | 0, 1, 2 |
 
 `done` and `failed` are terminal. `blocked` is a resumable pause, not terminal.
-**forge never merges**: the integrate phase opens a PR into `base_branch` and
-stops at `done`; a human reviews and merges.
+`pr_open` is a parked state, not terminal: **forge never merges**. The integrate
+phase opens a PR into the base branch and the runner stops there; a human
+reviews and merges, and the next sync (`scripts/sync-merged.sh`, run at the
+start of every runner loop and by `/forge-fix`) flips the task to `done`.
 
 ### Tier behavior summary
 
 - **Tier 0 (read-only):** `pending -> planning -> done`. No branch, no build, no
-  integrate. The artifact is a report; verify/review may still check the report
-  against `acceptance_criteria` before `done`.
+  integrate, no verify/review. The artifact is `report.md`, grounded in the
+  `acceptance_criteria`.
 - **Tier 1 (default):** full path `pending -> planning -> building -> verifying
-  -> reviewing -> integrating -> done`. Opens a PR into base; never merges.
+  -> reviewing -> integrating -> pr_open`. Opens a PR into base and parks;
+  `done` when a human merges.
 - **Tier 2 (gated):** as tier 1, with `planning -> plan_gate -> building` so a
   human approves the plan before any code is written.
 
@@ -209,6 +221,8 @@ Other components depend on these. Keep them consistent.
 - Format: `<type>-<suffix>`, where the prefix equals the spec's `type` and the
   suffix is a **ULID** (26-char Crockford base32, time-sortable) or a **short
   hash** (8 to 12 hex chars of a sha256 over a normalized provenance key).
+  These are conventions; the schema enforces only the `<type>-` prefix and a
+  6-to-26 character `[0-9A-Za-z]` suffix.
 - A ULID is preferred for fresh work; a short hash is preferred when a source
   should map deterministically to the same id so re-ingesting is idempotent.
 - The id must be unique within the project and use only `[0-9A-Za-z]`, because it
@@ -228,8 +242,10 @@ Other components depend on these. Keep them consistent.
 
 ### Base branch
 
-- The integrate phase opens the PR into `base_branch`, which defaults to the
-  project base (`develop`) and is overridable per spec.
+- The integrate phase opens the PR into the spec's `base_branch` when set, else
+  the project config's `vcs.pr_target`, else its `base_branch`, else `develop`.
+  The per-spec override always wins; the same precedence is stated in
+  `phases/integrate.md`.
 
 ---
 
@@ -243,8 +259,9 @@ scripts/validate-task.sh path/to/task.md
 
 Parses the frontmatter and checks it against the task-spec schema (required
 fields, enum values, id format, non-empty `acceptance_criteria`, no unknown
-fields). Prints a clear PASS/FAIL and exits non-zero on failure. Add `--json` to
-emit the validated frontmatter as JSON (used by ingesters).
+fields). Prints a clear PASS/FAIL and exits non-zero on failure. Pass `--json`
+as the first argument to emit the validated frontmatter as JSON (used by
+ingesters).
 
 ### Ingester contract
 
@@ -256,8 +273,9 @@ An **ingester** turns a source into queued task specs. Whatever the source
    produce an equivalent validated object).
 2. Set `source.kind` / `source.ref` for provenance.
 3. Register each spec into the queue at `.forge/queue.json` as a list of
-   `{task_id, priority, status}` entries (initial `status` is `pending`,
-   default `priority` is `P2`).
+   `{task_id, type, priority, status, depends_on, file}` entries (initial
+   `status` is `pending`, default `priority` is `P2`, `file` is the path to
+   the spec).
 
 The reference implementation is the file ingester, the simplest possible source:
 
