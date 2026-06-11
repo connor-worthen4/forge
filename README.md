@@ -17,7 +17,7 @@ Working pipeline skeleton (pre-v1). Implemented so far:
 - Phases: all seven phases (`intake`, `plan`, `build`, `verify`, `review`, `integrate`, `report`) have real prompts sharing the same discipline: grounded `path:line` evidence, a fixed artifact format per phase, and a common JSON result contract. Stub mode (canned results, no model calls) remains available for state-machine testing.
 - Plan gate: tier-2 tasks park at `plan_gate`; `/forge-approve` (or `scripts/approve-plan.sh`) approves the plan into the build loop or sends feedback back into a re-plan.
 - Commands: `/forge-status`, the interactive `/forge-fix` driver, and `/forge-approve`.
-- Tests: unit suites for the guardrail hook, `config_get`, and the plan-gate lifecycle, plus an end-to-end harness for the intake phase (real and stub modes).
+- Tests: unit suites for the guardrail hook, `config_get`, and the plan-gate lifecycle (including a check that runner-produced run records validate against the published run-record schema), plus an end-to-end harness for the intake phase (real and stub modes).
 
 Next up: a first run against a fresh target repository.
 
@@ -40,7 +40,7 @@ Next up: a first run against a fresh target repository.
       forge/
         .claude-plugin/
           plugin.json         # plugin manifest
-        commands/             # slash commands (/forge-status, /forge-fix)
+        commands/             # slash commands (/forge-status, /forge-fix, /forge-approve)
         phases/               # one prompt per pipeline phase, plus the test harness
         scripts/              # runner, drivers, validators, ingester
         schema/               # task-spec, run-record, project-config JSON schemas
@@ -51,6 +51,13 @@ Next up: a first run against a fresh target repository.
         skills/               # skills (empty for now)
 
 Runtime state (`.forge/queue.json`, `.forge/runs/`, `.forge/spend.json`) lives in the target repository and is gitignored.
+
+## Requirements
+
+- macOS or Linux with bash 3.2+
+- `git`, `jq`, and `python3` (PyYAML recommended; without it a ruby fallback handles the YAML parsing in the validators)
+- [Claude Code](https://code.claude.com) (`claude`) for real runs; everything also runs without it in stub mode
+- `gh` (GitHub CLI) for opening PRs and detecting merges in real mode
 
 ## Install
 
@@ -80,8 +87,25 @@ In the repo where forge will work:
 
 1. Create `.forge/config.yaml` (see `plugins/forge/examples/config.minimal.yaml` for the smallest valid config, `config.full.yaml` for every option).
 2. Validate it: `plugins/forge/scripts/validate-config.sh .forge/config.yaml`
-3. Write a task spec (see `plugins/forge/examples/` and `plugins/forge/docs/task-spec.md`), then validate it with `plugins/forge/scripts/validate-task.sh`.
-4. Drive one task interactively with `/forge-fix next`, or run the queue unattended with `plugins/forge/scripts/forge-run.sh --all`.
+3. Write task specs in the repo's `tasks/` directory (see `plugins/forge/examples/` and `plugins/forge/docs/task-spec.md`), then validate them with `plugins/forge/scripts/validate-task.sh tasks/<id>.md`.
+4. Queue them: `plugins/forge/scripts/ingest-files.sh tasks` (the unattended runner also refreshes the queue from `tasks/` by itself on every loop).
+5. Drive one task interactively with `/forge-fix next`, or run the queue unattended with `plugins/forge/scripts/forge-run.sh --all`.
+
+## Try the pipeline without spending anything
+
+Stub mode runs the entire state machine with canned phase results - no model
+calls, no API spend, no network. From a target repo with a queued task:
+
+```
+FORGE_STUB=1 plugins/forge/scripts/forge-run.sh --all
+```
+
+Tasks step through intake, plan, build, verify, review, and integrate exactly as
+in a real run (tier-2 tasks park at the plan gate, tier-0 tasks end at a
+report), and the run records land under `.forge/runs/`. Force failures to watch
+the recovery loops with `FORGE_STUB_STATUS=fail` (global) or
+`FORGE_STUB_STATUS_<phase>=fail|blocked` (per phase); see
+`plugins/forge/scripts/run-phase.sh` for the full stub contract.
 
 ## Develop loop
 
@@ -112,3 +136,7 @@ plugins/forge/phases/test/run-intake-tests.sh     # intake phase end to end
 
 - `main` — stable baseline.
 - `develop` — integration target. The factory opens pull requests against `develop`; a human reviews and merges them.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
