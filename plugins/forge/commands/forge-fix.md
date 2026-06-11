@@ -1,5 +1,5 @@
 ---
-description: Drive ONE task through the forge pipeline in your live session (subscription), then stop and wait. Usage: /forge-fix next | /forge-fix <task-id>
+description: "Drive ONE task through the forge pipeline in your live session (subscription), then stop and wait. Usage: /forge-fix next | /forge-fix <task-id>"
 argument-hint: "next | <task-id>"
 allowed-tools: Bash, Read, Edit, Write, Task
 ---
