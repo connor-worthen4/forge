@@ -14,11 +14,11 @@ Working pipeline skeleton (pre-v1). Implemented so far:
 - Project-config contract: JSON schema, validator, and minimal/full example configs.
 - Git-safety guardrail: a PreToolUse hook that blocks merges and pushes to protected branches, sourcing the protected list from the target repo's config.
 - Runner: phase executor, pipeline state-machine driver, unattended loop (`forge-run.sh --all`), next-task selector, and PR-merge detection (`pr_open` to `done`).
-- Phases: `intake` has a real prompt (grounded context brief with `path:line` citations, block/fail semantics). `plan`, `build`, `verify`, `review`, `integrate`, and `report` are stubs that return canned results so the state machine can be exercised end to end.
+- Phases: all seven phases (`intake`, `plan`, `build`, `verify`, `review`, `integrate`, `report`) have real prompts sharing the same discipline: grounded `path:line` evidence, a fixed artifact format per phase, and a common JSON result contract. Stub mode (canned results, no model calls) remains available for state-machine testing.
 - Commands: `/forge-status` and the interactive `/forge-fix` driver.
 - Tests: a unit suite for the guardrail hook and an end-to-end harness for the intake phase (real and stub modes).
 
-Next up: real prompts for the remaining phases, then a first run against a fresh target repository.
+Next up: an approval path for tier-2 `plan_gate` tasks, then a first run against a fresh target repository.
 
 ## How a task flows
 
