@@ -142,6 +142,16 @@ run DENY  "$REPO_FEAT" 'git branch -D main'
 run DENY  "$REPO_MAIN" 'git reset --hard HEAD~1'
 run DENY  "$REPO_FEAT" 'gh api -X PUT repos/o/r/pulls/1/merge'
 run DENY  "$REPO_FEAT" 'echo hi ; git merge develop'
+# Splitter and wrapper bypasses: background jobs, subshells, command
+# substitution, shell re-invocation, env flags, and force refspecs.
+run DENY  "$REPO_FEAT" 'true & git push origin main'
+run DENY  "$REPO_FEAT" '(git merge feature)'
+run DENY  "$REPO_FEAT" 'echo "$(git merge feature)"'
+run DENY  "$REPO_FEAT" 'bash -c "git merge feature"'
+run DENY  "$REPO_FEAT" 'sh -c "git push origin main"'
+run DENY  "$REPO_FEAT" 'env -i git merge feature'
+run DENY  "$REPO_FEAT" 'git push origin +main'
+run DENY  "$REPO_FEAT" 'git push origin +feature/x'   # any +refspec is a force push
 
 echo
 echo "Expected ALLOW:"
@@ -158,6 +168,11 @@ run ALLOW "$REPO_FEAT" 'git diff HEAD~1'
 run ALLOW "$REPO_FEAT" 'git rebase develop'
 run ALLOW "$REPO_FEAT" 'ls -la && git add -A'
 run ALLOW "$REPO_FEAT" 'npm test'
+# The aggressive splitter must not over-block ordinary commands.
+run ALLOW "$REPO_FEAT" 'git push origin feature/x 2>&1'
+run ALLOW "$REPO_FEAT" 'git commit -m "feat(scope): x"'
+run ALLOW "$REPO_FEAT" 'python3 -c "print(1)"'
+run ALLOW "$REPO_FEAT" 'echo "a & b"'
 
 echo
 echo "Config sourcing (.forge/config.yaml protected_branches):"

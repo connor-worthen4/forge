@@ -200,6 +200,9 @@ check_push() {
   local r src dst
   for r in "${refspecs[@]+"${refspecs[@]}"}"; do
     r="$(unquote "$r")"
+    case "$r" in
+      +*) deny "Blocked: force-push refspec '${r}' is never allowed (it rewrites shared history). ${PR_HINT}" ;;
+    esac
     if [ "${r#*:}" != "$r" ]; then
       src="${r%%:*}"
       dst="${r#*:}"
@@ -395,11 +398,14 @@ classify_segment() {
   read -r -a W <<< "$seg"
   [ ${#W[@]} -ge 1 ] || return 0
 
-  # Strip leading env-var assignments and common command wrappers.
+  # Strip leading env-var assignments, common command wrappers, and shell
+  # re-invocations (bash -c "git ..."), including any flags they take, so the
+  # real program is what gets classified.
   local k=0
   while [ $k -lt ${#W[@]} ]; do
     case "${W[$k]}" in
-      sudo|command|nice|nohup|time|env) k=$((k+1)) ;;
+      sudo|command|nice|nohup|time|env|xargs|bash|sh|zsh|dash|ksh) k=$((k+1)) ;;
+      -*) k=$((k+1)) ;;   # a wrapper's flag (env -i, bash -c, sudo -u ...)
       *=*) if [[ "${W[$k]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then k=$((k+1)); else break; fi ;;
       *) break ;;
     esac
@@ -440,10 +446,15 @@ CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty')"
 # Resolve protected branches now that the cwd (and thus any .forge/config.yaml) is known.
 resolve_protected
 
-# Split chained commands on && || ; | and newlines so a blocked op cannot hide
-# inside a chain. awk is used because BSD sed does not expand \n in replacements.
+# Split chained commands on && || ; | & and newlines, plus subshell and
+# command-substitution parens, so a blocked op cannot hide inside a chain,
+# background job, or grouping. Splitting is purely lexical: a paren inside a
+# quoted string also splits, which can only add segments to inspect (more
+# checks, never fewer). awk is used because BSD sed does not expand \n in
+# replacements.
 SEGMENTS="$(printf '%s' "$COMMAND" | awk '{
-  gsub(/\|\|/, "\n"); gsub(/&&/, "\n"); gsub(/;/, "\n"); gsub(/\|/, "\n"); print
+  gsub(/\|\|/, "\n"); gsub(/&&/, "\n"); gsub(/;/, "\n"); gsub(/\|/, "\n");
+  gsub(/&/, "\n"); gsub(/[()]/, "\n"); print
 }')"
 
 while IFS= read -r seg; do
