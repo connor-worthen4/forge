@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/connor-worthen4/forge/blob/main/plugins/forge/schema/project-config.schema.json",
   "title": "Forge Project Config",
-  "description": "Per-repository .forge/config.yaml. The engine-vs-project seam: every pipeline phase and the runner read this at runtime. Project-agnostic.",
+  "description": "Per-repository .forge/config.yaml. The engine-vs-project seam: the forge-run workflow and its phase agents read this at runtime. Project-agnostic.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "base_branch", "vcs", "commands"],
@@ -53,10 +53,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["test"],
-      "description": "How forge builds and checks THIS repo. Phases shell these out. Empty string means the phase skips that step.",
+      "description": "How forge builds and checks THIS repo. Phase agents shell these out. Empty string means the phase skips that step.",
       "properties": {
         "build": { "type": "string", "default": "", "description": "Build/compile command." },
-        "test": { "type": "string", "default": "", "description": "Test command. Verify shells this. Required key; must be non-empty when code-changing task types are enabled." },
+        "test": { "type": "string", "default": "", "description": "Test command. Verify runs this. Required key; should be non-empty for any repo with code-changing tasks." },
         "lint": { "type": "string", "default": "", "description": "Lint command." },
         "typecheck": { "type": "string", "default": "", "description": "Type-check command." }
       }
@@ -64,7 +64,7 @@
     "overrides": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Optional project specialization. Phases fall back to the generic engine behavior when these dirs are absent.",
+      "description": "Optional project specialization. Phase agents fall back to the generic engine behavior when these dirs are absent.",
       "properties": {
         "agents_dir": { "type": "string", "default": ".forge/agents", "description": "Directory of project-specific agent overrides." },
         "skills_dir": { "type": "string", "default": ".forge/skills", "description": "Directory of project-specific skill overrides." }
@@ -73,7 +73,7 @@
     "autonomy": {
       "type": "object",
       "additionalProperties": false,
-      "description": "How much the runner may do without a human.",
+      "description": "Pipeline autonomy: the default tier and which task types must pause for plan approval.",
       "properties": {
         "default_tier": {
           "type": "integer",
@@ -81,64 +81,37 @@
           "default": 1,
           "description": "0 read-only | 1 branch+PR | 2 gated (plan approval). Applied when a task spec does not set its own autonomy_tier."
         },
-        "allow_unattended": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": { "$ref": "#/$defs/taskType" },
-          "default": ["fix", "audit", "refactor", "chore"],
-          "description": "Task types the runner may process unattended (overnight)."
-        },
         "require_gate": {
           "type": "array",
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/taskType" },
           "default": ["build"],
-          "description": "Task types forced to tier-2 plan approval regardless of their own tier."
+          "description": "Task types forced to tier-2 plan approval regardless of their own tier. Such tasks park at plan_gate until /forge-approve."
         }
       }
     },
-    "notifications": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Optional outbound notifications from the unattended runner.",
-      "properties": {
-        "discord_webhook": {
-          "type": "string",
-          "description": "Discord webhook URL the runner posts its end-of-run summary to. May also be set via FORGE_DISCORD_WEBHOOK."
-        }
-      }
+    "review_lenses": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Optional. When set, the review phase fans out one parallel reviewer per lens (e.g. correctness, security, tests, scope) and a synth pass consolidates their findings. Omit for a single review agent."
     },
     "budget": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Cost and concurrency controls the runner honors.",
+      "description": "Pipeline budget: retry cap and per-phase model selection.",
       "properties": {
-        "nightly_usd": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Runner stops launching NEW tasks once cumulative night spend reaches this."
-        },
-        "monthly_usd": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Soft monthly cap. Set BELOW your account credit ceiling so forge throttles itself rather than getting cut off mid-build."
-        },
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
           "default": 2,
           "description": "Attempts per task across the combined verify->build and review->build recovery loops; once exhausted the task parks blocked."
         },
-        "concurrency": {
-          "type": "integer",
-          "minimum": 1,
-          "default": 1,
-          "description": "Max parallel headless sessions. Git-touching work is ALWAYS serialized regardless of this value."
-        },
         "models": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Phase -> model. Passed as --model to `claude -p` for that phase.",
+          "description": "Phase -> model. Overrides the model the phase agent runs on; omit to inherit the session model.",
           "properties": {
             "intake": { "$ref": "#/$defs/modelRef" },
             "plan": { "$ref": "#/$defs/modelRef" },

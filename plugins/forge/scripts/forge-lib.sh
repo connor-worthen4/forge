@@ -5,7 +5,7 @@
 #
 # Resolves the plugin dir (from this file's location) and the TARGET repo (the
 # repo forge operates on: FORGE_TARGET_REPO, else the current working dir). All
-# .forge/ state (config, queue, runs, spend) is read/written under TARGET.
+# .forge/ state (config, queue, runs) is read/written under TARGET.
 #
 # Deps: python3 (PyYAML; ruby fallback for YAML), jq, git.
 
@@ -15,7 +15,6 @@ TARGET="${FORGE_TARGET_REPO:-$PWD}"
 FORGE_DIR="$TARGET/.forge"
 CONFIG="$FORGE_DIR/config.yaml"
 QUEUE="$FORGE_DIR/queue.json"
-SPEND="$FORGE_DIR/spend.json"
 RUNS_DIR="$FORGE_DIR/runs"
 
 # Fail fast with a clear message when a required command is missing.
@@ -155,57 +154,5 @@ except Exception:
 d.update(f)
 d["updated_at"] = now
 json.dump(d, open(path, "w"), indent=2)
-PY
-}
-
-# Accumulate a phase cost into the durable spend ledger, resetting the night
-# window on a new day and the month window on a new month. Prints the running
-# night/month totals as JSON.
-#   spend_add <task_id> <cost_usd>
-spend_add() {
-  local today month
-  today="$(date +%F)"
-  month="$(date +%Y-%m)"
-  python3 - "$SPEND" "$1" "$2" "$today" "$month" <<'PY'
-import sys, json, os
-path, task_id, today, month = sys.argv[1], sys.argv[2], sys.argv[4], sys.argv[5]
-try:
-    cost = float(sys.argv[3])
-except ValueError:
-    cost = 0.0
-d = {}
-if os.path.exists(path):
-    try:
-        d = json.load(open(path)) or {}
-    except Exception:
-        d = {}
-if d.get("window_date") != today:
-    d["window_date"] = today
-    d["night_usd_spent"] = 0.0
-if d.get("month") != month:
-    d["month"] = month
-    d["month_usd_spent"] = 0.0
-d["night_usd_spent"] = round(d.get("night_usd_spent", 0.0) + cost, 6)
-d["month_usd_spent"] = round(d.get("month_usd_spent", 0.0) + cost, 6)
-pt = d.setdefault("per_task", {})
-pt[task_id] = round(pt.get(task_id, 0.0) + cost, 6)
-os.makedirs(os.path.dirname(path), exist_ok=True)
-json.dump(d, open(path, "w"), indent=2)
-print(json.dumps({"night_usd_spent": d["night_usd_spent"], "month_usd_spent": d["month_usd_spent"]}))
-PY
-}
-
-# Print a spend total ("night" or "month"); 0 if no ledger yet.
-spend_total() {
-  [ -f "$SPEND" ] || { printf '0'; return 0; }
-  local field="night_usd_spent"
-  [ "$1" = "month" ] && field="month_usd_spent"
-  python3 - "$SPEND" "$field" <<'PY'
-import sys, json
-try:
-    d = json.load(open(sys.argv[1])) or {}
-except Exception:
-    d = {}
-print(d.get(sys.argv[2], 0))
 PY
 }

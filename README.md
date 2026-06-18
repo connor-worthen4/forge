@@ -2,35 +2,29 @@
 
 Raw task in, tempered PR out — an agentic software factory for Claude Code, portable across any repo.
 
-Forge is a portable Claude Code plugin. Tasks flow through an agent pipeline — intake, plan, build, verify, review, integrate — and land as a pull request into the `develop` branch. Forge never merges; a human always reviews and merges the PR.
+Forge is a portable Claude Code plugin. A task flows through an agent pipeline — intake, plan, build, verify, review, integrate — and lands as a pull request into your base branch. Forge never merges; a human always reviews and merges the PR.
 
-The engine is generic and reusable across projects. Project-specific configuration lives in each target repository's `.forge/config.yaml`, not in this repository.
+The pipeline runs as a **Claude Code workflow** that you boot from your live session with a slash command. There is no daemon, no cron, and no separate API bill: forge runs inside Claude Code, governed by your plan. The engine is generic; project-specific configuration lives in each target repo's `.forge/config.yaml`, not in this repository.
 
-## Status
+## How it works
 
-Working pipeline skeleton (pre-v1). Implemented so far:
+- A thin plugin layer (slash commands) reads your config and task specs, then launches the **`forge-run` workflow** (`workflows/forge-run.js`).
+- The workflow is the pipeline state machine. For each task it spawns one **phase agent** per step (`agents/forge-*.md`), each running in an isolated context with a least-privilege tool set and returning a structured result.
+- The agents do the disk work: they read the spec, config, and prior artifacts, and write their own artifact into `.forge/runs/<task-id>/`. After the workflow returns, the launcher stamps the run record and queue.
+- A PreToolUse hook (`hooks/block-git-writes.sh`) blocks merges and pushes to protected branches throughout.
 
-- Task-spec contract: JSON schema, deterministic validator, status state machine, and example specs for each tier.
-- Project-config contract: JSON schema, validator, and minimal/full example configs.
-- Git-safety guardrail: a PreToolUse hook that blocks merges and pushes to protected branches, sourcing the protected list from the target repo's config.
-- Runner: phase executor, pipeline state-machine driver, unattended loop (`forge-run.sh --all`), next-task selector, and PR-merge detection (`pr_open` to `done`).
-- Phases: all seven phases (`intake`, `plan`, `build`, `verify`, `review`, `integrate`, `report`) have real prompts sharing the same discipline: grounded `path:line` evidence, a fixed artifact format per phase, and a common JSON result contract. Stub mode (canned results, no model calls) remains available for state-machine testing.
-- Plan gate: tier-2 tasks park at `plan_gate`; `/forge-approve` (or `scripts/approve-plan.sh`) approves the plan into the build loop or sends feedback back into a re-plan.
-- Commands: `/forge-status`, the interactive `/forge-fix` driver, and `/forge-approve`.
-- Tests: unit suites for the guardrail hook, `config_get`, and the plan-gate lifecycle (including a check that runner-produced run records validate against the published run-record schema), plus an end-to-end harness for the intake phase (real and stub modes).
-
-Next up: a first run against a fresh target repository.
+Works in two modes from the same agents: on an **existing repo** the phases gather real `path:line` context; on a **greenfield** project (or a raw prompt with no spec) they propose structure and scaffold from zero.
 
 ## How a task flows
 
-1. A task spec (markdown with YAML frontmatter) is validated and queued in the target repo's `.forge/queue.json`.
-2. The runner picks the next task and derives the pipeline shape from its type:
+1. A task is either a spec file (markdown + YAML frontmatter under `tasks/`) or a raw prompt passed to `/forge:run`.
+2. The launcher derives the pipeline shape from the task type and tier:
    - `audit` / `investigate` — tier 0, read-only: intake, plan, report. No branch, no PR.
    - `fix` / `refactor` / `chore` — tier 1, linear: intake, plan, build, verify, review, integrate, ending at an open PR.
-   - `build` — tier 2, gated: stops after plan for human approval before any code is written. `/forge-approve <task-id>` resumes it into the tier-1 loop; `/forge-approve <task-id> changes: <feedback>` triggers a re-plan.
-3. Each phase runs in an isolated context, reads the prior phases' artifacts from `.forge/runs/<task-id>/`, and files its own artifact (context brief, plan, diff, verdicts, PR record).
-4. Failed verify or review loops back to build, capped by the configured attempt budget.
-5. The pipeline ends at `pr_open`. A human reviews and merges; the next sync flips the task to `done`.
+   - `build` — tier 2, gated: stops after plan for human approval. `/forge:approve <task-id>` resumes it into the build loop; `/forge:approve <task-id> changes: <feedback>` triggers a re-plan.
+3. Each phase agent reads the prior phases' artifacts from `.forge/runs/<task-id>/` and files its own (context brief, plan, diff, verdicts, PR record).
+4. A failing verify or review loops back to build, capped by `budget.max_attempts`.
+5. Tier 1/2 ends at `pr_open`; a human reviews and merges. Tier 0 ends at `done` with a report.
 
 ## Repository layout
 
@@ -40,24 +34,23 @@ Next up: a first run against a fresh target repository.
       forge/
         .claude-plugin/
           plugin.json         # plugin manifest
-        commands/             # slash commands (/forge-status, /forge-fix, /forge-approve)
-        phases/               # one prompt per pipeline phase, plus the test harness
-        scripts/              # runner, drivers, validators, ingester
+        commands/             # slash commands (/forge:run, /forge:run-all, /forge:approve, /forge:status)
+        workflows/            # forge-run.js — the pipeline orchestrator
+        agents/               # one subagent per pipeline phase (forge-intake ... forge-report)
+        scripts/              # launcher glue: config assembly, ingester, validators, outcome recorder
         schema/               # task-spec, run-record, project-config JSON schemas
         hooks/                # git-safety guardrail hook and its tests
         docs/                 # task-spec and project-config contracts
         examples/             # example task specs and project configs
-        agents/               # subagents (empty for now)
-        skills/               # skills (empty for now)
 
-Runtime state (`.forge/queue.json`, `.forge/runs/`, `.forge/spend.json`) lives in the target repository and is gitignored.
+Runtime state (`.forge/queue.json`, `.forge/runs/`) lives in the target repository and is gitignored.
 
 ## Requirements
 
 - macOS or Linux with bash 3.2+
-- `git`, `jq`, and `python3` (PyYAML recommended; without it a ruby fallback handles the YAML parsing in the validators)
-- [Claude Code](https://code.claude.com) (`claude`) for real runs; everything also runs without it in stub mode
-- `gh` (GitHub CLI) for opening PRs and detecting merges in real mode
+- [Claude Code](https://code.claude.com) (`claude`) — the pipeline runs as a workflow inside a Claude Code session
+- `git`, `jq`, and `python3` (PyYAML recommended; a ruby fallback handles the YAML parsing otherwise)
+- `gh` (GitHub CLI), or `glab` for GitLab, to open PRs/MRs
 
 ## Install
 
@@ -75,37 +68,24 @@ Forge is distributed as a local marketplace during development.
    /plugin install forge@forge
    ```
 
-3. Confirm it loaded:
+3. Confirm it loaded (plugin commands are namespaced under the plugin name):
 
    ```
-   /forge-status
+   /forge:status
    ```
 
-## Set up a target repository
+## Use it
 
 In the repo where forge will work:
 
-1. Create `.forge/config.yaml` (see `plugins/forge/examples/config.minimal.yaml` for the smallest valid config, `config.full.yaml` for every option).
-2. Validate it: `plugins/forge/scripts/validate-config.sh .forge/config.yaml`
-3. Write task specs in the repo's `tasks/` directory (see `plugins/forge/examples/` and `plugins/forge/docs/task-spec.md`), then validate them with `plugins/forge/scripts/validate-task.sh tasks/<id>.md`.
-4. Queue them: `plugins/forge/scripts/ingest-files.sh tasks` (the unattended runner also refreshes the queue from `tasks/` by itself on every loop).
-5. Drive one task interactively with `/forge-fix next`, or run the queue unattended with `plugins/forge/scripts/forge-run.sh --all`.
+1. (Optional) Create `.forge/config.yaml` — see `plugins/forge/examples/config.minimal.yaml` for the smallest valid config and `config.full.yaml` for every option. Validate it with `plugins/forge/scripts/validate-config.sh .forge/config.yaml`. A brand-new project can skip this and run on the engine defaults.
+2. Give forge a task, either way:
+   - **A raw prompt:** `/forge:run "add bounded retry with backoff to the HTTP client"`.
+   - **A spec file:** write `tasks/<id>.md` (see `plugins/forge/examples/` and `plugins/forge/docs/task-spec.md`), validate it with `plugins/forge/scripts/validate-task.sh tasks/<id>.md`, then run `/forge:run <id>`.
+3. Run the whole queue at once with `/forge:run-all`.
+4. For a gated `build` task that parks at `plan_gate`, review the plan and run `/forge:approve <id>` (or `/forge:approve <id> changes: <feedback>` to send it back for a re-plan).
 
-## Try the pipeline without spending anything
-
-Stub mode runs the entire state machine with canned phase results - no model
-calls, no API spend, no network. From a target repo with a queued task:
-
-```
-FORGE_STUB=1 plugins/forge/scripts/forge-run.sh --all
-```
-
-Tasks step through intake, plan, build, verify, review, and integrate exactly as
-in a real run (tier-2 tasks park at the plan gate, tier-0 tasks end at a
-report), and the run records land under `.forge/runs/`. Force failures to watch
-the recovery loops with `FORGE_STUB_STATUS=fail` (global) or
-`FORGE_STUB_STATUS_<phase>=fail|blocked` (per phase); see
-`plugins/forge/scripts/run-phase.sh` for the full stub contract.
+Each run reports the final state per task: an open PR (tier 1/2), a report at `.forge/runs/<id>/report.md` (tier 0), a parked plan gate, or a blocked/failed reason. Watch live progress in the workflow view.
 
 ## Develop loop
 
@@ -115,9 +95,9 @@ For live iteration without installing, load the plugin directory directly:
 claude --plugin-dir /absolute/path/to/forge/plugins/forge
 ```
 
-Changes to commands, agents, skills, and hooks are picked up on the next session.
+Changes to commands, agents, the workflow, and hooks are picked up on the next session.
 
-Validate the manifests before committing:
+Validate the manifest before committing:
 
 ```
 claude plugin validate ./plugins/forge --strict
@@ -126,10 +106,8 @@ claude plugin validate ./plugins/forge --strict
 Run the test suites:
 
 ```
-plugins/forge/hooks/test/run-tests.sh             # guardrail hook unit tests
-plugins/forge/scripts/test/run-tests.sh           # config_get unit tests
-plugins/forge/scripts/test/run-approval-tests.sh  # plan-gate lifecycle (stub mode)
-plugins/forge/phases/test/run-intake-tests.sh     # intake phase end to end
+plugins/forge/hooks/test/run-tests.sh    # guardrail hook unit tests
+plugins/forge/scripts/test/run-tests.sh  # config_get unit tests
 ```
 
 ## Branches

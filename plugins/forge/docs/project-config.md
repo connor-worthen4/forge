@@ -1,20 +1,23 @@
 # Forge project config contract
 
 forge is installed once, globally, and carries zero project knowledge. Everything
-project-specific lives in a per-repo **`.forge/config.yaml`** that every pipeline
-phase and the runner read at runtime. This file is the engine-vs-project seam: a
-repo with only this config gets the generic factory; a repo that also supplies
-agent/skill overrides gets a customized one.
+project-specific lives in a per-repo **`.forge/config.yaml`** that the forge-run
+workflow and its phase agents read at runtime. This file is the engine-vs-project
+seam: a repo with only this config gets the generic factory; a repo that also
+supplies agent/skill overrides gets a customized one.
 
 This contract is project-agnostic. Nothing here is specific to any single target
 repository.
 
 - **Location:** `.forge/config.yaml` at the target repo root. It is committed to
   the target repo (it is configuration, not runtime state). Runtime state such as
-  `.forge/spend.json` and `.forge/runs/` is gitignored.
+  `.forge/runs/` and `.forge/queue.json` is gitignored.
 - **Schema:** [`schema/project-config.schema.json`](../schema/project-config.schema.json) (JSON Schema, Draft 2020-12).
 - **Examples:** [`examples/config.minimal.yaml`](../examples/config.minimal.yaml), [`examples/config.full.yaml`](../examples/config.full.yaml).
 - **Validate:** `scripts/validate-config.sh [.forge/config.yaml]`.
+
+A config file is optional for a brand-new project: with no `.forge/config.yaml`,
+the launcher falls back to the engine defaults documented below.
 
 ---
 
@@ -30,9 +33,9 @@ repository.
 | `vcs`                | object          | yes      | -                            | VCS host and CLI. See below. |
 | `commands`           | object          | yes      | -                            | How forge builds/checks this repo. See below. |
 | `overrides`          | object          | no       | see below                    | Optional project specialization. |
-| `autonomy`           | object          | no       | see below                    | How much the runner may do without a human. |
-| `budget`             | object          | no       | see below                    | Cost and concurrency controls. |
-| `notifications`      | object          | no       | see below                    | Outbound notifications from the unattended runner. |
+| `autonomy`           | object          | no       | see below                    | Default tier and which task types must pause for plan approval. |
+| `review_lenses`      | list of strings | no       | -                            | When set, the review phase fans out one reviewer per lens. See below. |
+| `budget`             | object          | no       | see below                    | Retry cap and per-phase model selection. |
 
 ### `vcs`
 
@@ -44,20 +47,20 @@ repository.
 
 ### `commands`
 
-How forge builds and checks this repo. Phases shell these out; an empty string
-means the phase skips that step.
+How forge builds and checks this repo. Phase agents shell these out; an empty
+string means the phase skips that step.
 
 | Field       | Type   | Required | Default | Meaning |
 | ----------- | ------ | -------- | ------- | ------- |
 | `build`     | string | no       | `""`    | Build/compile command. |
-| `test`      | string | yes      | `""`    | Test command. The verify phase runs this. Must be non-empty when code-changing task types are enabled. |
+| `test`      | string | yes      | `""`    | Test command. The verify phase runs this. Should be non-empty for any repo with code-changing tasks. |
 | `lint`      | string | no       | `""`    | Lint command. |
 | `typecheck` | string | no       | `""`    | Type-check command. |
 
 ### `overrides`
 
-Optional. Phases fall back to the generic engine behavior when these directories
-are absent.
+Optional. Phase agents fall back to the generic engine behavior when these
+directories are absent.
 
 | Field        | Type   | Default          | Meaning |
 | ------------ | ------ | ---------------- | ------- |
@@ -66,60 +69,42 @@ are absent.
 
 ### `autonomy`
 
-| Field              | Type            | Default                          | Meaning |
-| ------------------ | --------------- | -------------------------------- | ------- |
-| `default_tier`     | integer enum    | `1`                              | `0` read-only, `1` branch+PR, `2` gated. Used when a task spec does not set its own `autonomy_tier`. |
-| `allow_unattended` | list of types   | `[fix, audit, refactor, chore]`  | Task types the runner may process unattended (overnight). |
-| `require_gate`     | list of types   | `[build]`                        | Task types forced to tier-2 plan approval regardless of their own tier. |
+| Field          | Type         | Default     | Meaning |
+| -------------- | ------------ | ----------- | ------- |
+| `default_tier` | integer enum | `1`         | `0` read-only, `1` branch+PR, `2` gated. Used when a task spec does not set its own `autonomy_tier`. |
+| `require_gate` | list of types| `[build]`   | Task types forced to tier-2 plan approval regardless of their own tier. Such tasks park at `plan_gate` until `/forge:approve`. |
 
 Task types are `fix`, `build`, `audit`, `refactor`, `investigate`, `chore` (same
 enum as the task-spec contract).
+
+### `review_lenses`
+
+Optional list of lens names (for example `[correctness, security, tests, scope]`).
+When present, the review phase runs one parallel reviewer per lens, each blind to
+the others, and a synth pass consolidates and de-duplicates their findings into
+`review.md`. Omit the key entirely for a single review agent (the default).
 
 ### `budget`
 
 | Field          | Type    | Default | Meaning |
 | -------------- | ------- | ------- | ------- |
-| `nightly_usd`  | number  | -       | Runner stops launching NEW tasks once cumulative night spend reaches this. |
-| `monthly_usd`  | number  | -       | Soft monthly cap. Set BELOW your account credit ceiling. |
-| `max_attempts` | integer | `2`     | Attempts per task across the combined verify->build and review->build recovery loops. |
-| `concurrency`  | integer | `1`     | Max parallel headless sessions. Git-touching work is ALWAYS serialized. |
+| `max_attempts` | integer | `2`     | Attempts per task across the combined verify->build and review->build recovery loops. Once exhausted the task parks `blocked`. |
 | `models`       | object  | -       | Phase to model mapping. See [Models](#models). |
-
-### `notifications`
-
-| Field             | Type   | Required | Default | Meaning |
-| ----------------- | ------ | -------- | ------- | ------- |
-| `discord_webhook` | string | no       | -       | Discord webhook URL the unattended runner posts its end-of-run summary to. May also be set via the `FORGE_DISCORD_WEBHOOK` environment variable. |
 
 ---
 
-## Budget enforcement semantics
+## Budget semantics
 
-The runner (`scripts/forge-run.sh`) honors these so spend stays bounded and
-forge throttles itself rather than getting cut off mid-build.
+forge runs inside your live Claude Code session, so there is no separate API bill
+to cap; usage is governed by your Claude Code plan. The `budget` block therefore
+controls only the pipeline's behavior, not money:
 
-- **Durable ledger.** The runner reads each headless result's cost field and
-  accumulates spend in `.forge/spend.json` (gitignored):
-  `{ window_date, night_usd_spent, month_usd_spent, per_task: {...} }`.
-- **Soft caps, checked before launch.** Before launching a new task, the runner
-  compares `night_usd_spent` against `budget.nightly_usd` and `month_usd_spent`
-  against `budget.monthly_usd`. If either is reached, it finishes any in-flight
-  task and stops launching new ones. This is a graceful soft cap set BELOW
-  Anthropic's hard credit limit, so forge throttles itself instead of failing
-  mid-build.
-- **Per-phase models.** `budget.models[phase]` is passed as `--model` to
-  `claude -p` for that phase. See [Models](#models).
 - **Retry cap.** `budget.max_attempts` caps the combined verify->build and
-  review->build recovery loops per task. Once exhausted, the task parks
-  `blocked` rather than looping forever.
-
-### Credit ceiling
-
-`monthly_usd` should sit below your account's actual credit ceiling, which is
-plan- and account-specific (configure your hard spend limit in the Anthropic
-console). `validate-config.sh` warns when `monthly_usd` is unset or at/above a
-reference ceiling (default `$100`, override with `FORGE_CREDIT_CEILING_USD`). The
-warning is advisory and does not fail validation.
+  review->build recovery loops per task. Once exhausted, the task parks `blocked`
+  rather than looping forever.
+- **Per-phase models.** `budget.models[phase]` overrides the model that phase's
+  agent runs on. An unmapped phase inherits the session model. See
+  [Models](#models).
 
 ---
 
@@ -142,20 +127,18 @@ name. Valid aliases were verified against the official Claude Code model docs
 
 Pinned full strings (verified from the models overview): `claude-opus-4-8`,
 `claude-sonnet-4-6`, `claude-haiku-4-5-20251001` (alias `claude-haiku-4-5`); a
-`[1m]` suffix may be appended to opus/sonnet. Approximate pricing per million
-tokens (input/output): Opus $5/$25, Sonnet $3/$15, Haiku $1/$5.
+`[1m]` suffix may be appended to opus/sonnet.
 
-Recommended defaults at a modest budget (cheap models for mechanical phases,
-Sonnet for reasoning). All seven phases accept a mapping; an unmapped phase
-falls back to `FORGE_DEFAULT_MODEL`, else `haiku`:
+A reasonable mapping uses cheap models for mechanical phases and Sonnet for the
+reasoning ones; an unmapped phase inherits the session model:
 
 ```
 intake: haiku    plan: sonnet    build: sonnet    verify: haiku
 review: sonnet   integrate: haiku                 report: haiku
 ```
 
-`opus` is reserved for explicit tier-2 overrides and should never be a phase
-default at this budget. `validate-config.sh` warns if any phase model is `opus`.
+`opus` is reserved for explicit tier-2 overrides and should rarely be a phase
+default. `validate-config.sh` warns if any phase model is `opus`.
 
 ---
 
@@ -183,9 +166,9 @@ scripts/validate-config.sh .forge/config.yaml
 ```
 
 Errors fail the run (non-zero exit): missing required fields, wrong `version`,
-bad enum values (`vcs.host`, `vcs.cli`, `autonomy.default_tier`, task types,
-model phase keys), and a missing `commands.test` when code-changing task types
-are enabled. Warnings are advisory and do not fail: `monthly_usd` unset or
-at/above the credit ceiling, an unattended `build` with no build command, a phase
-model set to `opus`, and `vcs.cli` inconsistent with `host`. When the python
+bad enum values (`vcs.host`, `vcs.cli`, `autonomy.default_tier`, task types in
+`require_gate`, model phase keys), a non-positive `budget.max_attempts`, and
+malformed `protected_branches` or `review_lenses`. Warnings are advisory and do
+not fail: an empty `commands.test`, a phase model set to `opus`, an unrecognized
+model string, and `vcs.cli` inconsistent with `host`. When the python
 `jsonschema` library is available, a full Draft 2020-12 validation runs as well.

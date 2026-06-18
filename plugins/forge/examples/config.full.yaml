@@ -1,6 +1,6 @@
 # Full, annotated forge project config (.forge/config.yaml).
-# This file is the engine-vs-project seam: every pipeline phase and the runner
-# read it at runtime. Keep it project-specific; the engine stays generic.
+# This file is the engine-vs-project seam: the forge-run workflow and its phase
+# agents read it at runtime. Keep it project-specific; the engine stays generic.
 
 version: 1
 
@@ -17,7 +17,7 @@ vcs:
   cli: gh               # gh | glab (default derived from host)
   pr_target: develop    # base/target branch for PRs (GitHub) / MRs (GitLab)
 
-# How forge builds and checks THIS repo. Phases shell these out; an empty
+# How forge builds and checks THIS repo. Phase agents shell these out; an empty
 # string means the phase skips that step. The verify phase runs `test`.
 commands:
   build: "npm run build"
@@ -25,23 +25,24 @@ commands:
   lint: "npm run lint"
   typecheck: "npm run typecheck"
 
-# Optional project specialization. Phases fall back to the generic engine
+# Optional project specialization. Phase agents fall back to the generic engine
 # behavior when these directories are absent.
 overrides:
   agents_dir: .forge/agents
   skills_dir: .forge/skills
 
 autonomy:
-  default_tier: 1                                 # 0 read-only | 1 branch+PR | 2 gated
-  allow_unattended: [fix, audit, refactor, chore] # task types the runner may process overnight
-  require_gate: [build]                           # task types forced to tier-2 plan approval
+  default_tier: 1         # 0 read-only | 1 branch+PR | 2 gated
+  require_gate: [build]   # task types forced to tier-2 plan approval (park at plan_gate)
+
+# Optional. Turn the review phase into a parallel fan-out: one reviewer per lens,
+# then a synth pass that consolidates their findings into review.md. Omit this
+# key for a single review agent.
+review_lenses: [correctness, security, tests, scope]
 
 budget:
-  nightly_usd: 3.00     # runner stops launching NEW tasks once cumulative night spend hits this
-  monthly_usd: 90.00    # soft monthly cap; set BELOW your Anthropic credit ceiling
   max_attempts: 2       # attempts per task across the verify/review recovery loops before it parks blocked
-  concurrency: 1        # max parallel headless sessions; git-touching work is ALWAYS serialized
-  models:               # phase -> model alias (verified) or pinned full string
+  models:               # phase -> model alias (verified) or pinned full string; omit to inherit the session model
     intake: haiku
     plan: sonnet
     build: sonnet
@@ -50,8 +51,3 @@ budget:
     integrate: haiku
     report: haiku
     # opus is reserved for explicit tier-2 overrides, never a phase default at this budget.
-
-# Optional outbound notifications from the unattended runner. The webhook may
-# also be supplied via the FORGE_DISCORD_WEBHOOK environment variable.
-notifications:
-  discord_webhook: https://discord.com/api/webhooks/<id>/<token>
