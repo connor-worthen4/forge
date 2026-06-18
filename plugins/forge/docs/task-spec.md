@@ -3,9 +3,10 @@
 This is the canonical contract for how work flows through forge. Every unit of
 work, whatever its origin (a CLI prompt, a hand-written file, a GitHub issue, or
 any future source), normalizes into one **task spec**. Every pipeline phase
-(intake, plan, build, verify, review, integrate) reads from that spec and records
-progress in a **run record**. Getting this contract right keeps the phases
-simple; getting it wrong leaks complexity downstream.
+(intake, plan, build, verify, review, integrate) reads from that spec and writes
+its artifact; the launcher records the final outcome in a **run record**. Getting
+this contract right keeps the phases simple; getting it wrong leaks complexity
+downstream.
 
 This contract is project-agnostic. Nothing here is specific to any single target
 repository; project-specific configuration lives in each target repo's
@@ -65,7 +66,7 @@ The frontmatter validates against [`schema/task-spec.schema.json`](../schema/tas
 | `context_refs` | list of strings            | **Pointers** to read: paths, URLs, related PRs. Never inline the content itself, only references to it. |
 | `priority`     | enum                       | `P0`, `P1`, `P2`, `P3` (queue ordering; lower number is more urgent). |
 | `base_branch`  | string                     | Branch the eventual PR targets. Defaults to the project's configured base (`develop`); override per task here. |
-| `depends_on`   | list of task ids           | Task ids that must reach status `done` before this task becomes selectable by the runner. |
+| `depends_on`   | list of task ids           | Task ids that must reach status `done` before this task becomes selectable by `/forge-run`. |
 | `source`       | object `{kind, ref}`       | Provenance. `kind` is one of `cli`, `file`, `issue`, `notion`, `slack`, `email`, `api`, `other`; `ref` is the originating URL, path, or id. |
 
 The body (everything after the closing `---`) is the free-form prose
@@ -127,6 +128,13 @@ cares about. Mapping:
 | (terminal)      | `done`, `failed` - `current_phase` keeps its last value (`integrate` for tiers 1-2, `report` for tier 0) |
 | (pause)         | `blocked` |
 
+The state machine below is the conceptual pipeline. The forge-run workflow drives
+the phases in memory and shows each transition live in the workflow view; it
+persists only the **terminal or parked** state to `run.json` (via
+`scripts/record-outcome.sh`): `done`, `pr_open`, `plan_gate`, `blocked`, or
+`failed`. The intermediate `planning`/`building`/`verifying`/`reviewing`/
+`integrating` values remain part of the contract for tooling and crash inspection.
+
 ---
 
 ## Status state machine
@@ -146,7 +154,7 @@ stateDiagram-v2
     reviewing --> integrating: review passes
     reviewing --> building: review fails (loop)
     integrating --> pr_open: PR opened into base (forge never merges)
-    pr_open --> done: human merges; the next sync detects it
+    pr_open --> done: a human merges the PR on the host
     done --> [*]
 
     pending --> blocked
@@ -188,16 +196,17 @@ stateDiagram-v2
 | `reviewing`   | `integrating` | Review passes                                         | 1, 2    |
 | `reviewing`   | `building`    | Review fails; loop back to build                      | 1, 2    |
 | `integrating` | `pr_open`     | PR opened into the base branch (forge never merges)   | 1, 2    |
-| `pr_open`     | `done`        | A human merged the PR; the next sync detects it       | 1, 2    |
+| `pr_open`     | `done`        | A human merges the PR on the host (forge does not poll)| 1, 2    |
 | any phase     | `blocked`     | Needs a human decision, credential, or access         | 0, 1, 2 |
 | `blocked`     | active phase  | Human unblocked; resume the phase it paused in        | 0, 1, 2 |
 | any phase     | `failed`      | Unrecoverable error                                   | 0, 1, 2 |
 
 `done` and `failed` are terminal. `blocked` is a resumable pause, not terminal.
-`pr_open` is a parked state, not terminal: **forge never merges**. The integrate
-phase opens a PR into the base branch and the runner stops there; a human
-reviews and merges, and the next sync (`scripts/sync-merged.sh`, run at the
-start of every runner loop and by `/forge-fix`) flips the task to `done`.
+`pr_open` is the parked end state for tiers 1-2: **forge never merges**. The
+integrate phase opens a PR into the base branch and stops there; a human reviews
+and merges it on the host. forge does not poll for the merge, so for code tasks
+`pr_open` is where a forge run ends; only tier-0 tasks reach `done` (their report
+is written).
 
 ### Tier behavior summary
 
@@ -205,8 +214,8 @@ start of every runner loop and by `/forge-fix`) flips the task to `done`.
   integrate, no verify/review. The artifact is `report.md`, grounded in the
   `acceptance_criteria`.
 - **Tier 1 (default):** full path `pending -> planning -> building -> verifying
-  -> reviewing -> integrating -> pr_open`. Opens a PR into base and parks;
-  `done` when a human merges.
+  -> reviewing -> integrating -> pr_open`. Opens a PR into base and parks at
+  `pr_open`; a human reviews and merges it on the host.
 - **Tier 2 (gated):** as tier 1, with `planning -> plan_gate -> building` so a
   human approves the plan before any code is written.
 
@@ -244,8 +253,8 @@ Other components depend on these. Keep them consistent.
 
 - The integrate phase opens the PR into the spec's `base_branch` when set, else
   the project config's `vcs.pr_target`, else its `base_branch`, else `develop`.
-  The per-spec override always wins; the same precedence is stated in
-  `phases/integrate.md`.
+  The per-spec override always wins; the same precedence is stated in the
+  `forge-integrate` agent.
 
 ---
 

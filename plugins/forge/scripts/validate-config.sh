@@ -7,13 +7,11 @@
 #   - required fields present (version, base_branch, vcs.host, commands.test)
 #   - version == 1
 #   - enum values: vcs.host, vcs.cli, autonomy.default_tier, task types in
-#     autonomy.allow_unattended / require_gate, budget.models phase keys
-#   - commands referenced by enabled task types exist (code-changing types need
-#     a non-empty commands.test)
+#     autonomy.require_gate, budget.models phase keys
+#   - protected_branches, review_lenses well-formed when present
+#   - budget.max_attempts a positive integer when present
 # Warnings (do NOT fail):
-#   - budget.monthly_usd unset or >= the credit ceiling (default $100, override
-#     with FORGE_CREDIT_CEILING_USD)
-#   - 'build' enabled unattended but commands.build empty
+#   - commands.test empty (verify needs it for any code-changing task)
 #   - a phase model set to opus (reserved for explicit tier-2 overrides)
 #   - vcs.cli inconsistent with host; unrecognized model strings
 #
@@ -27,7 +25,6 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCHEMA="${FORGE_CONFIG_SCHEMA:-$SCRIPT_DIR/../schema/project-config.schema.json}"
-CEILING="${FORGE_CREDIT_CEILING_USD:-100}"
 CONFIG="${1:-.forge/config.yaml}"
 
 if [ ! -f "$SCHEMA" ]; then
@@ -39,14 +36,10 @@ if [ ! -f "$CONFIG" ]; then
   exit 2
 fi
 
-python3 - "$SCHEMA" "$CONFIG" "$CEILING" <<'PY'
+python3 - "$SCHEMA" "$CONFIG" <<'PY'
 import sys, json, re
 
-schema_path, config_path, ceiling_s = sys.argv[1], sys.argv[2], sys.argv[3]
-try:
-    ceiling = float(ceiling_s)
-except ValueError:
-    ceiling = 100.0
+schema_path, config_path = sys.argv[1], sys.argv[2]
 
 
 def load_yaml(text):
@@ -88,8 +81,6 @@ props = schema.get("properties", {})
 defs = schema.get("$defs", {})
 task_types = defs.get("taskType", {}).get("enum",
                                           ["fix", "build", "audit", "refactor", "investigate", "chore"])
-READ_ONLY = {"audit", "investigate"}
-code_changing = set(task_types) - READ_ONLY
 
 modelref = defs.get("modelRef", {})
 aliases, model_pat = [], None
@@ -140,6 +131,10 @@ commands = cfg.get("commands")
 if not isinstance(commands, dict) or "test" not in commands:
     errors.append("missing required field: commands.test")
     commands = commands if isinstance(commands, dict) else {}
+else:
+    tv = commands.get("test", "")
+    if not (isinstance(tv, str) and tv.strip()):
+        warnings.append("commands.test is empty; the verify phase needs it to grade any code-changing task")
 
 # protected_branches
 pb = cfg.get("protected_branches")
@@ -148,11 +143,16 @@ if pb is not None:
             or not all(isinstance(x, str) and x.strip() for x in pb)):
         errors.append("protected_branches must be a non-empty list of strings")
 
+# review_lenses
+rl = cfg.get("review_lenses")
+if rl is not None:
+    if (not isinstance(rl, list) or not rl
+            or not all(isinstance(x, str) and x.strip() for x in rl)):
+        errors.append("review_lenses must be a non-empty list of strings")
+
 # autonomy
 autonomy = cfg.get("autonomy") or {}
 auto_schema = props.get("autonomy", {}).get("properties", {})
-def_unattended = auto_schema.get("allow_unattended", {}).get("default", ["fix", "audit", "refactor", "chore"])
-def_gate = auto_schema.get("require_gate", {}).get("default", ["build"])
 
 if "default_tier" in autonomy:
     tiers = auto_schema.get("default_tier", {}).get("enum", [0, 1, 2])
@@ -160,47 +160,27 @@ if "default_tier" in autonomy:
         errors.append("autonomy.default_tier must be one of %s (got %r)"
                       % (tiers, autonomy["default_tier"]))
 
-
-def check_types(field):
-    value = autonomy.get(field)
-    if value is None:
-        return
-    if not isinstance(value, list):
-        errors.append("autonomy.%s must be a list" % field)
-        return
-    for t in value:
-        if t not in task_types:
-            errors.append("autonomy.%s has invalid task type %r (allowed: %s)"
-                          % (field, t, task_types))
-
-
-check_types("allow_unattended")
-check_types("require_gate")
-
-unattended = autonomy.get("allow_unattended", def_unattended) or []
-gate = autonomy.get("require_gate", def_gate) or []
-enabled = set(unattended) | set(gate)
-
-
-def cmd_empty(name):
-    v = commands.get(name, "")
-    return not (isinstance(v, str) and v.strip())
-
-
-# commands referenced by enabled task types exist
-if (enabled & code_changing) and cmd_empty("test"):
-    errors.append("commands.test must be non-empty because code-changing task types are enabled (%s)"
-                  % sorted(enabled & code_changing))
-if "build" in set(unattended) and cmd_empty("build"):
-    warnings.append("commands.build is empty but 'build' is in autonomy.allow_unattended "
-                    "(unattended builds need a build command)")
+gate = autonomy.get("require_gate")
+if gate is not None:
+    if not isinstance(gate, list):
+        errors.append("autonomy.require_gate must be a list")
+    else:
+        for t in gate:
+            if t not in task_types:
+                errors.append("autonomy.require_gate has invalid task type %r (allowed: %s)"
+                              % (t, task_types))
 
 # budget
 budget = cfg.get("budget") or {}
+if "max_attempts" in budget:
+    ma = budget["max_attempts"]
+    if not isinstance(ma, int) or isinstance(ma, bool) or ma < 1:
+        errors.append("budget.max_attempts must be an integer >= 1 (got %r)" % ma)
+
 models = budget.get("models") or {}
 phases = list(props.get("budget", {}).get("properties", {})
               .get("models", {}).get("properties", {}).keys()) \
-    or ["intake", "plan", "build", "verify", "review", "integrate"]
+    or ["intake", "plan", "build", "verify", "review", "integrate", "report"]
 if isinstance(models, dict):
     for ph, mv in models.items():
         if ph not in phases:
@@ -216,20 +196,6 @@ if isinstance(models, dict):
         if mv in ("opus", "opus[1m]", "best") or mv.startswith("claude-opus"):
             warnings.append("budget.models.%s uses opus; opus is reserved for explicit tier-2 overrides, "
                             "not a phase default at this budget" % ph)
-
-# budget ceiling
-monthly = budget.get("monthly_usd")
-if monthly is None:
-    warnings.append("budget.monthly_usd is not set; set it below your account credit ceiling "
-                    "(ceiling used for this check: $%.2f)" % ceiling)
-else:
-    try:
-        mf = float(monthly)
-        if mf >= ceiling:
-            warnings.append("budget.monthly_usd ($%.2f) is at or above the credit ceiling ($%.2f); "
-                            "set it BELOW the ceiling so forge throttles itself" % (mf, ceiling))
-    except (TypeError, ValueError):
-        errors.append("budget.monthly_usd must be a number")
 
 # optional full schema validation
 try:
