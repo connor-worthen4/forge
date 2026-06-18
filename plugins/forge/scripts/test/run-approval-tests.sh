@@ -72,6 +72,37 @@ assert_eq "select-next picks the approved task" "$TASK" "$("$SCRIPTS/select-next
 out="$("$SCRIPTS/run-task.sh" "$TASK")"
 assert_eq "resumed run reaches pr_open" "pr_open" "$out"
 assert_eq "queue status pr_open" "pr_open" "$(queue_status)"
+
+# The record the runner just produced must validate against the published
+# run-record schema, so the contract and the implementation cannot drift.
+schema_errs="$(python3 - "$PLUGIN_DIR/schema/run-record.schema.json" "$RUN_JSON" <<'PY'
+import sys, json
+schema = json.load(open(sys.argv[1]))
+rec = json.load(open(sys.argv[2]))
+errs = []
+try:
+    import jsonschema
+    v = jsonschema.Draft202012Validator(schema)
+    errs = ["%s: %s" % ("/".join(map(str, e.path)) or "<root>", e.message)
+            for e in v.iter_errors(rec)]
+except ImportError:
+    # Minimal fallback: required keys, known keys, enum membership.
+    props = schema["properties"]
+    errs += ["missing required key: %s" % k
+             for k in schema.get("required", []) if k not in rec]
+    for k, v in rec.items():
+        if k not in props:
+            errs.append("unknown key: %s" % k)
+        elif "enum" in props[k] and v not in props[k]["enum"]:
+            errs.append("%s: %r not in %s" % (k, v, props[k]["enum"]))
+print("; ".join(errs))
+PY
+)"
+if [ -z "$schema_errs" ]; then
+  ok "pr_open run.json validates against run-record.schema.json"
+else
+  bad "run.json violates the published schema: $schema_errs"
+fi
 echo
 
 # --- scenario 3: request-changes -> re-plan -> parks at the gate again -------

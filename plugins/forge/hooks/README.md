@@ -9,8 +9,11 @@ branch, never force-push, and never rewrite shared history.
 ## What it does
 
 - Inspects only `Bash` tool calls (`tool_input.command`); everything else passes.
-- Splits chained commands (`&&`, `||`, `;`, `|`, newlines) so a blocked op cannot
-  hide inside a chain, and understands `git -C <path>` and arbitrary remote names.
+- Splits chained commands (`&&`, `||`, `;`, `|`, `&`, newlines) and
+  subshell/command-substitution groupings (`(...)`, `$(...)`) so a blocked op
+  cannot hide inside a chain, background job, or grouping; strips leading
+  env assignments and wrappers (`sudo`, `env`, `nice`, `xargs`, `bash -c`,
+  `sh -c`, ...); and understands `git -C <path>` and arbitrary remote names.
 - On a blocked op it returns a structured deny:
   `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"..."}}`
   and exits 0, so the decision is honored in every permission mode, including
@@ -21,15 +24,23 @@ branch, never force-push, and never rewrite shared history.
 
 ### Configuration
 
-| Env var                    | Default                | Purpose                                            |
-| -------------------------- | ---------------------- | -------------------------------------------------- |
-| `FORGE_PROTECTED_BRANCHES` | `main,master,develop`  | Comma-separated branches that may not be mutated.  |
-| `FORGE_INTEGRATION_BRANCH` | `develop`              | The only protected branch a PR may target.         |
+The protected-branch list resolves in priority order (highest first); an empty
+or absent source falls through to the next, so the default always protects:
+
+| Source                                       | Default                | Purpose                                            |
+| -------------------------------------------- | ---------------------- | -------------------------------------------------- |
+| `protected_branches` in `.forge/config.yaml` | -                      | The single source of truth, read relative to the hook cwd (same field `validate-config.sh` checks). |
+| `FORGE_PROTECTED_BRANCHES` env var           | -                      | Comma-separated fallback when no config file is present. |
+| Hardcoded default                            | `main,master,develop`  | Fail-safe floor.                                   |
+
+`FORGE_INTEGRATION_BRANCH` (default `develop`) names the only protected branch
+a PR may target.
 
 ### Blocked vs allowed (summary)
 
 Blocked: `git merge`; push to a protected branch (any remote/refspec, incl.
-`HEAD:main` and `:branch` deletes); `git push --force/-f/--force-with-lease`;
+`HEAD:main` and `:branch` deletes); `git push --force/-f/--force-with-lease`
+and `+refspec` force pushes (`git push origin +branch`);
 `git push --all/--mirror`; `git branch -d/-D <protected>`; `git reset --hard` and
 `git rebase` on or targeting a protected branch; `git commit`/`git push` while on
 a protected branch; `gh pr merge`; `gh pr create --base main|master`;
@@ -80,7 +91,11 @@ What forge users must do:
 This hook is a fast, local, best-effort guardrail. It runs only inside Claude
 Code, only for the `Bash` tool, and only against command strings it can parse. A
 process outside Claude Code, a different tool, or a sufficiently obfuscated
-command is out of its reach. **The authoritative enforcement of "nothing merges
+command is out of its reach. Parsing is lexical and pre-execution: checks that
+depend on repository state (the current branch for `git commit` or
+`git reset --hard`) are evaluated against the state *before* the command runs,
+so a chain like `git checkout main && git commit -m x` is judged while HEAD is
+still the feature branch. **The authoritative enforcement of "nothing merges
 without review" is GitHub branch protection on the remote**, which the hook
 cannot bypass.
 

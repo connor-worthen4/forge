@@ -4,8 +4,10 @@
 #
 # Reads task spec files (*.md) from a directory, validates each against the
 # task-spec schema, and writes a queue index to .forge/queue.json as a list of
-# {task_id, priority, status} entries (status "pending", default priority "P2"),
-# sorted by priority then task_id.
+# {task_id, type, priority, status, depends_on, file} entries (status "pending",
+# default priority "P2"), sorted by priority then task_id. This is the same
+# entry shape the unattended runner's queue refresh writes, so a queue built
+# here is fully usable by every consumer (select-next, run-task, /forge-fix).
 #
 # This is the simplest possible source. Any other ingester (cli, issue, notion,
 # ...) must satisfy the same contract documented in docs/task-spec.md: emit task
@@ -77,7 +79,8 @@ specs_json="$("$VALIDATE" --json "${files[@]}")" || {
 }
 
 queue_json="$(printf '%s' "$specs_json" | jq '
-  map({task_id: .id, priority: (.priority // "P2"), status: "pending"})
+  map({task_id: .id, type: .type, priority: (.priority // "P2"), status: "pending",
+       depends_on: (.depends_on // []), file: ._file})
   | sort_by(.priority, .task_id)
 ')"
 

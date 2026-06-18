@@ -28,6 +28,7 @@
         "verifying",
         "reviewing",
         "integrating",
+        "pr_open",
         "done",
         "blocked",
         "failed"
@@ -36,7 +37,7 @@
     "current_phase": {
       "type": "string",
       "description": "Coarse pipeline phase.",
-      "enum": ["intake", "plan", "build", "verify", "review", "integrate"]
+      "enum": ["intake", "plan", "build", "verify", "review", "integrate", "report"]
     },
     "branch_name": {
       "type": ["string", "null"],
@@ -69,9 +70,13 @@
       "type": "object",
       "description": "Map of artifact name to path. Known keys below; additional string paths allowed.",
       "properties": {
+        "intake": { "type": "string" },
         "plan": { "type": "string" },
         "diff": { "type": "string" },
         "verdict": { "type": "string" },
+        "review": { "type": "string" },
+        "report": { "type": "string" },
+        "pr": { "type": "string" },
         "transcript": { "type": "string" }
       },
       "additionalProperties": { "type": "string" }
@@ -85,7 +90,7 @@
         "message": { "type": "string" },
         "phase": {
           "type": "string",
-          "enum": ["intake", "plan", "build", "verify", "review", "integrate"]
+          "enum": ["intake", "plan", "build", "verify", "review", "integrate", "report"]
         }
       }
     },

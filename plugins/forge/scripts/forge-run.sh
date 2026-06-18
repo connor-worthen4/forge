@@ -21,15 +21,23 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=forge-lib.sh
 . "$SCRIPT_DIR/forge-lib.sh"
 
+usage() { echo "usage: forge-run.sh [run] [--all|--once] [--max N]" >&2; exit 2; }
+
 mode="all"
 max=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    run) shift ;;                 # `forge run --all` -> ignore the verb
+    run) shift ;;                 # `forge-run.sh run --all` -> ignore the verb
     --all) mode="all"; shift ;;
     --once) mode="once"; shift ;;
-    --max) max="${2:-}"; shift 2 ;;
-    *) shift ;;
+    --max)
+      if [ "$#" -lt 2 ] || ! printf '%s' "$2" | grep -Eq '^[0-9]+$'; then
+        echo "forge-run: --max requires a numeric value" >&2
+        usage
+      fi
+      max="$2"; shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "forge-run: unknown argument '$1'" >&2; usage ;;
   esac
 done
 
@@ -169,8 +177,10 @@ while : ; do
     break
   fi
   echo ">> $next"
-  outcome="$("$SCRIPT_DIR/run-task.sh" "$next" 2>/dev/null)" || true
-  echo "   -> ${outcome:-error}"
+  # Final state on stdout; diagnostics land in the (gitignored) runner log so a
+  # crashing task is debuggable instead of silently reported as "error".
+  outcome="$("$SCRIPT_DIR/run-task.sh" "$next" 2>>"$FORGE_DIR/runner.log")" || true
+  echo "   -> ${outcome:-error (see $FORGE_DIR/runner.log)}"
   iter=$((iter + 1))
   [ "$mode" = "once" ] && { stop_reason="--once"; break; }
 done

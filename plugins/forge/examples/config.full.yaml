@@ -39,7 +39,7 @@ autonomy:
 budget:
   nightly_usd: 3.00     # runner stops launching NEW tasks once cumulative night spend hits this
   monthly_usd: 90.00    # soft monthly cap; set BELOW your Anthropic credit ceiling
-  max_attempts: 2       # per (task, phase) retries before the task is blocked/failed
+  max_attempts: 2       # attempts per task across the verify/review recovery loops before it parks blocked
   concurrency: 1        # max parallel headless sessions; git-touching work is ALWAYS serialized
   models:               # phase -> model alias (verified) or pinned full string
     intake: haiku
@@ -48,4 +48,10 @@ budget:
     verify: haiku
     review: sonnet
     integrate: haiku
+    report: haiku
     # opus is reserved for explicit tier-2 overrides, never a phase default at this budget.
+
+# Optional outbound notifications from the unattended runner. The webhook may
+# also be supplied via the FORGE_DISCORD_WEBHOOK environment variable.
+notifications:
+  discord_webhook: https://discord.com/api/webhooks/<id>/<token>

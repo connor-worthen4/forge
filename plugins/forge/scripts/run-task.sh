@@ -127,8 +127,7 @@ maybe_merge() {
 }
 
 # --- locate spec & derive shape --------------------------------------------
-spec="$(queue_get "$task_id" file "")"
-if [ -z "$spec" ] || [ ! -f "$spec" ]; then spec="$TARGET/tasks/$task_id.md"; fi
+spec="$(spec_path "$task_id")"
 if [ ! -f "$spec" ]; then
   mark_failed "task spec not found" "intake"
   exit 1
@@ -137,8 +136,6 @@ fi
 type="$(spec_field "$spec" type fix)"
 spec_tier="$(spec_field "$spec" autonomy_tier "")"
 title="$(spec_field "$spec" title "$task_id")"
-base_branch="$(spec_field "$spec" base_branch "")"
-[ -n "$base_branch" ] || base_branch="$(config_get base_branch develop)"
 default_tier="$(config_get autonomy.default_tier 1)"
 require_gate="$(config_get autonomy.require_gate '["build"]')"
 max_attempts="$(config_get budget.max_attempts 2)"

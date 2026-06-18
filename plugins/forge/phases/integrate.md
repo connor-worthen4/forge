@@ -19,9 +19,9 @@ them, then read your inputs. Do this with real tool calls:
    `base_branch`.
 4. Read `FORGE_RUN_DIR/run.json` (`branch_name`).
 
-The PR target is: `vcs.pr_target`, else the spec's `base_branch`, else
-`config.base_branch`, else `develop`. If the spec or run record is unreadable,
-return `fail`.
+The PR target is: the spec's `base_branch` when set (the per-task override
+always wins), else `vcs.pr_target`, else `config.base_branch`, else `develop`.
+If the spec or run record is unreadable, return `fail`.
 
 ## What you do, in order
 

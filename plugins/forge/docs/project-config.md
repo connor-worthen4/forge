@@ -32,6 +32,7 @@ repository.
 | `overrides`          | object          | no       | see below                    | Optional project specialization. |
 | `autonomy`           | object          | no       | see below                    | How much the runner may do without a human. |
 | `budget`             | object          | no       | see below                    | Cost and concurrency controls. |
+| `notifications`      | object          | no       | see below                    | Outbound notifications from the unattended runner. |
 
 ### `vcs`
 
@@ -80,16 +81,22 @@ enum as the task-spec contract).
 | -------------- | ------- | ------- | ------- |
 | `nightly_usd`  | number  | -       | Runner stops launching NEW tasks once cumulative night spend reaches this. |
 | `monthly_usd`  | number  | -       | Soft monthly cap. Set BELOW your account credit ceiling. |
-| `max_attempts` | integer | `2`     | Per (task, phase) retries before the task is blocked/failed. |
+| `max_attempts` | integer | `2`     | Attempts per task across the combined verify->build and review->build recovery loops. |
 | `concurrency`  | integer | `1`     | Max parallel headless sessions. Git-touching work is ALWAYS serialized. |
 | `models`       | object  | -       | Phase to model mapping. See [Models](#models). |
+
+### `notifications`
+
+| Field             | Type   | Required | Default | Meaning |
+| ----------------- | ------ | -------- | ------- | ------- |
+| `discord_webhook` | string | no       | -       | Discord webhook URL the unattended runner posts its end-of-run summary to. May also be set via the `FORGE_DISCORD_WEBHOOK` environment variable. |
 
 ---
 
 ## Budget enforcement semantics
 
-The future runner honors these so spend stays bounded and forge throttles itself
-rather than getting cut off mid-build.
+The runner (`scripts/forge-run.sh`) honors these so spend stays bounded and
+forge throttles itself rather than getting cut off mid-build.
 
 - **Durable ledger.** The runner reads each headless result's cost field and
   accumulates spend in `.forge/spend.json` (gitignored):
@@ -102,9 +109,9 @@ rather than getting cut off mid-build.
   mid-build.
 - **Per-phase models.** `budget.models[phase]` is passed as `--model` to
   `claude -p` for that phase. See [Models](#models).
-- **Retry cap.** `budget.max_attempts` caps the verify->build and review->build
-  recovery loops per phase. Once exhausted, the task moves to `blocked` or
-  `failed` rather than looping forever.
+- **Retry cap.** `budget.max_attempts` caps the combined verify->build and
+  review->build recovery loops per task. Once exhausted, the task parks
+  `blocked` rather than looping forever.
 
 ### Credit ceiling
 
@@ -139,11 +146,12 @@ Pinned full strings (verified from the models overview): `claude-opus-4-8`,
 tokens (input/output): Opus $5/$25, Sonnet $3/$15, Haiku $1/$5.
 
 Recommended defaults at a modest budget (cheap models for mechanical phases,
-Sonnet for reasoning):
+Sonnet for reasoning). All seven phases accept a mapping; an unmapped phase
+falls back to `FORGE_DEFAULT_MODEL`, else `haiku`:
 
 ```
-intake: haiku    plan: sonnet    build: sonnet
-verify: haiku    review: sonnet  integrate: haiku
+intake: haiku    plan: sonnet    build: sonnet    verify: haiku
+review: sonnet   integrate: haiku                 report: haiku
 ```
 
 `opus` is reserved for explicit tier-2 overrides and should never be a phase

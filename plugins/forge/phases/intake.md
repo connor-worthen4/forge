@@ -78,9 +78,9 @@ that the pipeline shape the runner will use for that type is appropriate:
 - `audit`, `investigate`      -> tier-0 read-only: produces a report, no code changes.
 - `build`                     -> gated tier-2: stops at a plan gate for human approval.
 
-If the declared type is clearly wrong for the work (for example, labelled `fix`
+If the declared type is clearly wrong for the work (for example, labeled `fix`
 but the body describes a multi-file new feature that is really a `build`, or
-labelled `build` but it is a one-line `fix`), BLOCK and say so plainly rather
+labeled `build` but it is a one-line `fix`), BLOCK and say so plainly rather
 than silently proceeding down the wrong pipeline.
 
 ### 3. Locate context (lightweight)

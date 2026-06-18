@@ -127,7 +127,7 @@
           "type": "integer",
           "minimum": 1,
           "default": 2,
-          "description": "Per (task, phase) retries before the task is blocked/failed. Caps the verify->build and review->build loops."
+          "description": "Attempts per task across the combined verify->build and review->build recovery loops; once exhausted the task parks blocked."
         },
         "concurrency": {
           "type": "integer",
@@ -145,7 +145,8 @@
             "build": { "$ref": "#/$defs/modelRef" },
             "verify": { "$ref": "#/$defs/modelRef" },
             "review": { "$ref": "#/$defs/modelRef" },
-            "integrate": { "$ref": "#/$defs/modelRef" }
+            "integrate": { "$ref": "#/$defs/modelRef" },
+            "report": { "$ref": "#/$defs/modelRef" }
           }
         }
       }
