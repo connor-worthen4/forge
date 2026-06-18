@@ -72,7 +72,7 @@ directories are absent.
 | Field          | Type         | Default     | Meaning |
 | -------------- | ------------ | ----------- | ------- |
 | `default_tier` | integer enum | `1`         | `0` read-only, `1` branch+PR, `2` gated. Used when a task spec does not set its own `autonomy_tier`. |
-| `require_gate` | list of types| `[build]`   | Task types forced to tier-2 plan approval regardless of their own tier. Such tasks park at `plan_gate` until `/forge-approve`. |
+| `require_gate` | list of types| `[build]`   | Task types forced to tier-2 plan approval regardless of their own tier. Such tasks park at `plan_gate` until `/forge:approve`. |
 
 Task types are `fix`, `build`, `audit`, `refactor`, `investigate`, `chore` (same
 enum as the task-spec contract).

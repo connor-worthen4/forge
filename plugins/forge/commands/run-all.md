@@ -1,5 +1,5 @@
 ---
-description: "Drain every runnable queued task through the forge pipeline in this session, via the forge-run workflow. Usage: /forge-run"
+description: "Drain every runnable queued task through the forge pipeline in this session, via the forge-run workflow. Usage: /forge:run-all"
 argument-hint: ""
 allowed-tools: Bash, Read, Workflow
 ---
@@ -10,7 +10,7 @@ one forge-run workflow, then you report and stop. The forge plugin lives at
 `${CLAUDE_PLUGIN_ROOT}`; the target repo is the current working directory.
 
 Tasks already parked or finished are skipped: `plan_gate` items need
-`/forge-approve`, and `pr_open`/`done`/`blocked`/`failed` are not re-run here.
+`/forge:approve`, and `pr_open`/`done`/`blocked`/`failed` are not re-run here.
 
 Do exactly the following, then STOP:
 
@@ -40,4 +40,4 @@ Do exactly the following, then STOP:
 
 6. **Report and STOP.** Print a compact summary: each task and its final state,
    the PR urls for `pr_open` tasks, and which tasks parked at `plan_gate` (needing
-   `/forge-approve`) or `blocked`/`failed` (with reasons).
+   `/forge:approve`) or `blocked`/`failed` (with reasons).

@@ -17,11 +17,11 @@ Works in two modes from the same agents: on an **existing repo** the phases gath
 
 ## How a task flows
 
-1. A task is either a spec file (markdown + YAML frontmatter under `tasks/`) or a raw prompt passed to `/forge`.
+1. A task is either a spec file (markdown + YAML frontmatter under `tasks/`) or a raw prompt passed to `/forge:run`.
 2. The launcher derives the pipeline shape from the task type and tier:
    - `audit` / `investigate` — tier 0, read-only: intake, plan, report. No branch, no PR.
    - `fix` / `refactor` / `chore` — tier 1, linear: intake, plan, build, verify, review, integrate, ending at an open PR.
-   - `build` — tier 2, gated: stops after plan for human approval. `/forge-approve <task-id>` resumes it into the build loop; `/forge-approve <task-id> changes: <feedback>` triggers a re-plan.
+   - `build` — tier 2, gated: stops after plan for human approval. `/forge:approve <task-id>` resumes it into the build loop; `/forge:approve <task-id> changes: <feedback>` triggers a re-plan.
 3. Each phase agent reads the prior phases' artifacts from `.forge/runs/<task-id>/` and files its own (context brief, plan, diff, verdicts, PR record).
 4. A failing verify or review loops back to build, capped by `budget.max_attempts`.
 5. Tier 1/2 ends at `pr_open`; a human reviews and merges. Tier 0 ends at `done` with a report.
@@ -34,7 +34,7 @@ Works in two modes from the same agents: on an **existing repo** the phases gath
       forge/
         .claude-plugin/
           plugin.json         # plugin manifest
-        commands/             # slash commands (/forge, /forge-run, /forge-approve, /forge-status)
+        commands/             # slash commands (/forge:run, /forge:run-all, /forge:approve, /forge:status)
         workflows/            # forge-run.js — the pipeline orchestrator
         agents/               # one subagent per pipeline phase (forge-intake ... forge-report)
         scripts/              # launcher glue: config assembly, ingester, validators, outcome recorder
@@ -68,10 +68,10 @@ Forge is distributed as a local marketplace during development.
    /plugin install forge@forge
    ```
 
-3. Confirm it loaded:
+3. Confirm it loaded (plugin commands are namespaced under the plugin name):
 
    ```
-   /forge-status
+   /forge:status
    ```
 
 ## Use it
@@ -80,10 +80,10 @@ In the repo where forge will work:
 
 1. (Optional) Create `.forge/config.yaml` — see `plugins/forge/examples/config.minimal.yaml` for the smallest valid config and `config.full.yaml` for every option. Validate it with `plugins/forge/scripts/validate-config.sh .forge/config.yaml`. A brand-new project can skip this and run on the engine defaults.
 2. Give forge a task, either way:
-   - **A raw prompt:** `/forge "add bounded retry with backoff to the HTTP client"`.
-   - **A spec file:** write `tasks/<id>.md` (see `plugins/forge/examples/` and `plugins/forge/docs/task-spec.md`), validate it with `plugins/forge/scripts/validate-task.sh tasks/<id>.md`, then run `/forge <id>`.
-3. Run the whole queue at once with `/forge-run`.
-4. For a gated `build` task that parks at `plan_gate`, review the plan and run `/forge-approve <id>` (or `/forge-approve <id> changes: <feedback>` to send it back for a re-plan).
+   - **A raw prompt:** `/forge:run "add bounded retry with backoff to the HTTP client"`.
+   - **A spec file:** write `tasks/<id>.md` (see `plugins/forge/examples/` and `plugins/forge/docs/task-spec.md`), validate it with `plugins/forge/scripts/validate-task.sh tasks/<id>.md`, then run `/forge:run <id>`.
+3. Run the whole queue at once with `/forge:run-all`.
+4. For a gated `build` task that parks at `plan_gate`, review the plan and run `/forge:approve <id>` (or `/forge:approve <id> changes: <feedback>` to send it back for a re-plan).
 
 Each run reports the final state per task: an open PR (tier 1/2), a report at `.forge/runs/<id>/report.md` (tier 0), a parked plan gate, or a blocked/failed reason. Watch live progress in the workflow view.
 

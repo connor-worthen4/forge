@@ -66,7 +66,7 @@ The frontmatter validates against [`schema/task-spec.schema.json`](../schema/tas
 | `context_refs` | list of strings            | **Pointers** to read: paths, URLs, related PRs. Never inline the content itself, only references to it. |
 | `priority`     | enum                       | `P0`, `P1`, `P2`, `P3` (queue ordering; lower number is more urgent). |
 | `base_branch`  | string                     | Branch the eventual PR targets. Defaults to the project's configured base (`develop`); override per task here. |
-| `depends_on`   | list of task ids           | Task ids that must reach status `done` before this task becomes selectable by `/forge-run`. |
+| `depends_on`   | list of task ids           | Task ids that must reach status `done` before this task becomes selectable by `/forge:run-all`. |
 | `source`       | object `{kind, ref}`       | Provenance. `kind` is one of `cli`, `file`, `issue`, `notion`, `slack`, `email`, `api`, `other`; `ref` is the originating URL, path, or id. |
 
 The body (everything after the closing `---`) is the free-form prose

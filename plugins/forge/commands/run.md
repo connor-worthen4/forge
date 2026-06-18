@@ -1,5 +1,5 @@
 ---
-description: "Run ONE task through the forge pipeline in this session, via the forge-run workflow. Usage: /forge <task-id> | /forge \"<goal prompt>\""
+description: "Run ONE task through the forge pipeline in this session, via the forge-run workflow. Usage: /forge:run <task-id> | /forge:run \"<goal prompt>\""
 argument-hint: "<task-id> | \"<goal prompt>\""
 allowed-tools: Bash, Read, Workflow
 ---
@@ -39,5 +39,5 @@ Do exactly the following, then STOP:
 
 5. **Report and STOP.** State the final state for the task: `pr_open` (give the PR
    url), `done` (tier-0 report at `.forge/runs/<id>/report.md`), `plan_gate`
-   (review the plan and run `/forge-approve <id>`), or `blocked`/`failed` (give the
+   (review the plan and run `/forge:approve <id>`), or `blocked`/`failed` (give the
    reason). Do not start another task.

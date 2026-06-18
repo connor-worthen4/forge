@@ -1,5 +1,5 @@
 ---
-description: "Approve or reject a tier-2 plan parked at plan_gate, then run it. Usage: /forge-approve <task-id> | /forge-approve <task-id> changes: <feedback>"
+description: "Approve or reject a tier-2 plan parked at plan_gate, then run it. Usage: /forge:approve <task-id> | /forge:approve <task-id> changes: <feedback>"
 argument-hint: "<task-id> [changes: <feedback>]"
 allowed-tools: Bash, Read, Write, Workflow
 ---
@@ -41,4 +41,4 @@ Do exactly the following, then STOP:
 
 4. **Report and STOP.** On approval: state the final state and the PR url (or the
    block reason). On request-changes: state that the task re-planned and is parked
-   at `plan_gate` again for another `/forge-approve`. Do nothing else.
+   at `plan_gate` again for another `/forge:approve`. Do nothing else.
