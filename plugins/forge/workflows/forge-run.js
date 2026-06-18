@@ -72,6 +72,13 @@ const FINDINGS = {
   },
 }
 
+// The Workflow harness may hand the script its args as a JSON string rather
+// than a parsed object. Normalize up front so every args.* read below works
+// whether the launcher passed an object or a serialized string.
+if (typeof args === 'string') {
+  try { args = JSON.parse(args) } catch (e) { args = {} }
+}
+
 const cfg = args.config || {}
 const budget = cfg.budget || {}
 const models = budget.models || {}
@@ -83,6 +90,11 @@ const baseBranch = cfg.base_branch || 'develop'
 const commands = cfg.commands || {}
 const vcs = cfg.vcs || {}
 const reviewLenses = Array.isArray(cfg.review_lenses) && cfg.review_lenses.length ? cfg.review_lenses : null
+
+// Phase agents are registered by this plugin, so their agent-type names are
+// namespaced by the plugin name: agents/forge-intake.md -> "forge:forge-intake".
+// Keep this prefix in sync with the plugin name in .claude-plugin/plugin.json.
+const AGENT_NS = 'forge:'
 
 const ok = (r) => r && r.status === 'ok'
 const isBlocked = (r) => r && r.status === 'blocked'
@@ -120,7 +132,7 @@ function contextBlock(task, tier, attempt) {
 }
 
 function runPhase(phase, task, tier, attempt) {
-  const opts = { label: `${phase}:${task.taskId}`, phase, agentType: `forge-${phase}`, schema: RESULT }
+  const opts = { label: `${phase}:${task.taskId}`, phase, agentType: `${AGENT_NS}forge-${phase}`, schema: RESULT }
   if (models[phase]) opts.model = models[phase]
   return agent(
     `You are the forge ${phase} phase. Your role, discipline, and output contract are in your ` +
@@ -144,7 +156,7 @@ async function runReview(task, tier, attempt) {
             `Context:\n\n${contextBlock(task, tier, attempt)}\n\n` +
             `Take the branch diff yourself and review it through the ${lens} lens only. ` +
             `Do NOT write review.md. Return the findings object (lens + findings array).`,
-          { label: `review:${lens}:${task.taskId}`, phase: 'review', agentType: 'forge-review', schema: FINDINGS },
+          { label: `review:${lens}:${task.taskId}`, phase: 'review', agentType: `${AGENT_NS}forge-review`, schema: FINDINGS },
         ),
       ),
     )
@@ -154,7 +166,7 @@ async function runReview(task, tier, attempt) {
       `Independent lens reviewers produced these findings:\n${JSON.stringify(lensFindings)}\n\n` +
       `Consolidate and de-duplicate them, confirm every blocker/major against the diff yourself, ` +
       `write review.md into the run dir, and return the result object. PASS only if no blocker or major survives.`,
-    { label: `review:synth:${task.taskId}`, phase: 'review', agentType: 'forge-review', schema: RESULT },
+    { label: `review:synth:${task.taskId}`, phase: 'review', agentType: `${AGENT_NS}forge-review`, schema: RESULT },
   )
 }
 
