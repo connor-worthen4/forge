@@ -38,6 +38,15 @@ Do exactly the following, then STOP:
 5. **Record outcomes.** For each entry in `results`, run
    `"${CLAUDE_PLUGIN_ROOT}/scripts/record-outcome.sh" <taskId> <final> <phase> "<prUrl or ''>" "<branch or ''>" "<reason or ''>"`.
 
-6. **Report and STOP.** Print a compact summary: each task and its final state,
-   the PR urls for `pr_open` tasks, and which tasks parked at `plan_gate` (needing
-   `/forge:approve`) or `blocked`/`failed` (with reasons).
+6. **Check for cross-PR conflicts.** Run
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/check-conflicts.sh"`. It simulates the pairwise
+   merges of the open forge PRs and reports which ones will collide on sequential
+   merge - a class of conflict the host's per-PR mergeable flag cannot see,
+   because each PR is clean against the base on its own. Include its output in
+   your summary so the human can merge the PRs in a deliberate order (or rebase)
+   instead of discovering the conflict mid-merge.
+
+7. **Report and STOP.** Print a compact summary: each task and its final state,
+   the PR urls for `pr_open` tasks, which tasks parked at `plan_gate` (needing
+   `/forge:approve`) or `blocked`/`failed` (with reasons), and the conflict
+   check's findings.
