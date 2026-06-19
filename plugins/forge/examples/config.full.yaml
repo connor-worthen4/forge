@@ -1,0 +1,53 @@
+# Full, annotated forge project config (.forge/config.yaml).
+# This file is the engine-vs-project seam: the forge-run workflow and its phase
+# agents read it at runtime. Keep it project-specific; the engine stays generic.
+
+version: 1
+
+# Default branch feature branches are cut from and PRs target.
+base_branch: develop
+
+# Source of truth for the git guardrail's protected list. The guardrail hook
+# reads this first (relative to cwd), then FORGE_PROTECTED_BRANCHES, then its
+# built-in default of [main, master, develop].
+protected_branches: [main, master, develop]
+
+vcs:
+  host: github          # github | gitlab
+  cli: gh               # gh | glab (default derived from host)
+  pr_target: develop    # base/target branch for PRs (GitHub) / MRs (GitLab)
+
+# How forge builds and checks THIS repo. Phase agents shell these out; an empty
+# string means the phase skips that step. The verify phase runs `test`.
+commands:
+  build: "npm run build"
+  test: "npm test"
+  lint: "npm run lint"
+  typecheck: "npm run typecheck"
+
+# Optional project specialization. Phase agents fall back to the generic engine
+# behavior when these directories are absent.
+overrides:
+  agents_dir: .forge/agents
+  skills_dir: .forge/skills
+
+autonomy:
+  default_tier: 1         # 0 read-only | 1 branch+PR | 2 gated
+  require_gate: [build]   # task types forced to tier-2 plan approval (park at plan_gate)
+
+# Optional. Turn the review phase into a parallel fan-out: one reviewer per lens,
+# then a synth pass that consolidates their findings into review.md. Omit this
+# key for a single review agent.
+review_lenses: [correctness, security, tests, scope]
+
+budget:
+  max_attempts: 2       # attempts per task across the verify/review recovery loops before it parks blocked
+  models:               # phase -> model alias (verified) or pinned full string; omit to inherit the session model
+    intake: haiku
+    plan: sonnet
+    build: sonnet
+    verify: haiku
+    review: sonnet
+    integrate: haiku
+    report: haiku
+    # opus is reserved for explicit tier-2 overrides, never a phase default at this budget.

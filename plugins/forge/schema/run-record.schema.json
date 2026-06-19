@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/connor-worthen4/forge/blob/main/plugins/forge/schema/run-record.schema.json",
+  "title": "Forge Run Record",
+  "description": "Mutable execution state for one attempt at a task spec. Lives at .forge/runs/<task-id>/run.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "attempt_n", "status", "current_phase", "created_at", "updated_at"],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "The id of the task spec this run executes.",
+      "pattern": "^(fix|build|audit|refactor|investigate|chore)-[0-9A-Za-z]{6,26}$"
+    },
+    "attempt_n": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Which attempt this is for the task."
+    },
+    "status": {
+      "type": "string",
+      "description": "Current state-machine state.",
+      "enum": [
+        "pending",
+        "planning",
+        "plan_gate",
+        "building",
+        "verifying",
+        "reviewing",
+        "integrating",
+        "pr_open",
+        "done",
+        "blocked",
+        "failed"
+      ]
+    },
+    "current_phase": {
+      "type": "string",
+      "description": "Coarse pipeline phase.",
+      "enum": ["intake", "plan", "build", "verify", "review", "integrate", "report"]
+    },
+    "branch_name": {
+      "type": ["string", "null"],
+      "description": "Working branch (forge/<type>/<id>-<slug>); null for tier-0 read-only runs."
+    },
+    "pr_url": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "The opened PR once integrate has run; null otherwise."
+    },
+    "verdict": {
+      "type": ["object", "null"],
+      "description": "Outcome from verify/review.",
+      "additionalProperties": false,
+      "required": ["result"],
+      "properties": {
+        "result": {
+          "type": "string",
+          "enum": ["pass", "fail"]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "Map of artifact name to path. Known keys below; additional string paths allowed.",
+      "properties": {
+        "intake": { "type": "string" },
+        "plan": { "type": "string" },
+        "diff": { "type": "string" },
+        "verdict": { "type": "string" },
+        "review": { "type": "string" },
+        "report": { "type": "string" },
+        "pr": { "type": "string" },
+        "transcript": { "type": "string" }
+      },
+      "additionalProperties": { "type": "string" }
+    },
+    "error": {
+      "type": ["object", "null"],
+      "description": "Set when a phase errors.",
+      "additionalProperties": false,
+      "required": ["message"],
+      "properties": {
+        "message": { "type": "string" },
+        "phase": {
+          "type": "string",
+          "enum": ["intake", "plan", "build", "verify", "review", "integrate", "report"]
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Run creation timestamp (ISO 8601)."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last update timestamp (ISO 8601)."
+    }
+  }
+}
