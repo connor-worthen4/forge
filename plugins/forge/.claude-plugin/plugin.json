@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "forge",
   "displayName": "Forge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Raw task in, tempered PR out — an agentic software factory for Claude Code, portable across any repo.",
   "author": {
     "name": "connor-worthen4"

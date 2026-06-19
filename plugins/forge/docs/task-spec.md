@@ -104,7 +104,7 @@ The run record validates against [`schema/run-record.schema.json`](../schema/run
 | `attempt_n`     | integer (>= 1)               | Which attempt this is for the task. |
 | `status`        | enum                         | Current state-machine state (see below). |
 | `current_phase` | enum                         | Coarse pipeline phase: `intake`, `plan`, `build`, `verify`, `review`, `integrate`, `report`. |
-| `branch_name`   | string or null               | Working branch (`forge/<type>/<id>-<slug>`); null for tier-0 read-only runs. |
+| `branch_name`   | string or null               | Working branch (`forge/<type>/<id>`); null for tier-0 read-only runs. |
 | `pr_url`        | string (uri) or null         | The opened PR, once integrate has run; null otherwise. |
 | `verdict`       | object or null               | `{ result: pass|fail, reasons: [string] }` from verify/review. |
 | `artifacts`     | object (name -> path)         | Known keys `intake`, `plan`, `diff`, `verdict`, `review`, `report`, `pr`, `transcript`; additional paths allowed. |

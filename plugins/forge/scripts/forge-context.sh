@@ -161,9 +161,22 @@ SKIP_FOR_ALL = {"plan_gate", "pr_open", "done", "blocked", "failed"}
 GATE_PASSED = {"building", "verifying", "reviewing", "integrating"}
 
 
-def slugify(title, fallback):
-    s = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")[:48]
-    return s or fallback
+def branch_name(ttype, task_id):
+    """Compose the work-branch name as ``forge/<type>/<id>``.
+
+    The task id already carries the mnemonic, so the branch is that id under the
+    type namespace; the human-readable title lives on the PR, not the branch. A
+    redundant leading ``<type>-`` on the id is stripped, so a ``build`` task with
+    id ``build-foo`` becomes ``forge/build/foo`` rather than the doubled-up
+    ``forge/build/build-foo``. The id is sanitized to the characters git allows
+    in a ref, falling back to the raw id if that leaves nothing.
+    """
+    name = task_id
+    prefix = ttype + "-"
+    if name.startswith(prefix):
+        name = name[len(prefix):]
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-") or task_id
+    return "forge/%s/%s" % (ttype, name)
 
 
 def read_run_status(task_id):
@@ -197,7 +210,7 @@ def make_task(task_id, ttype, autonomy_tier, title, spec_file, goal_text):
         approved, start, replan = False, "intake", None
     branch = None
     if ttype not in ("audit", "investigate"):
-        branch = "forge/%s/%s-%s" % (ttype, task_id, slugify(title, task_id))
+        branch = branch_name(ttype, task_id)
     return {
         "taskId": task_id,
         "type": ttype,

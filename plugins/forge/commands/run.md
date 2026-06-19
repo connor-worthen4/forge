@@ -37,7 +37,13 @@ Do exactly the following, then STOP:
    `"${CLAUDE_PLUGIN_ROOT}/scripts/record-outcome.sh" <taskId> <final> <phase> "<prUrl or ''>" "<branch or ''>" "<reason or ''>"`
    to stamp `.forge/runs/<id>/run.json` and `.forge/queue.json`.
 
-5. **Report and STOP.** State the final state for the task: `pr_open` (give the PR
+5. **Check for cross-PR conflicts (only if a PR was opened).** If the task reached
+   `pr_open`, run `"${CLAUDE_PLUGIN_ROOT}/scripts/check-conflicts.sh"` to see
+   whether the new PR collides with any other open forge PR on sequential merge
+   (each can be clean against the base yet conflict with a sibling). Mention any
+   collisions in your report.
+
+6. **Report and STOP.** State the final state for the task: `pr_open` (give the PR
    url), `done` (tier-0 report at `.forge/runs/<id>/report.md`), `plan_gate`
    (review the plan and run `/forge:approve <id>`), or `blocked`/`failed` (give the
    reason). Do not start another task.
