@@ -93,5 +93,60 @@ assert_eq "no" "$got" "no false conflict on a file only one branch touched"
 rm -rf "$CTMP"
 
 echo
+echo "run-all defers a task until its depends_on has merged into base:"
+GTMP="$(mktemp -d)"
+mkdir -p "$GTMP/tasks"
+git -C "$GTMP" init -q -b develop
+git -C "$GTMP" config user.email tester@forge.test
+git -C "$GTMP" config user.name "forge tester"
+printf 'seed\n' > "$GTMP/seed.txt"
+git -C "$GTMP" add -A && git -C "$GTMP" commit -qm base
+cat > "$GTMP/tasks/fix-aaaaaa1111.md" <<'SPEC'
+---
+id: fix-aaaaaa1111
+title: Task A
+type: fix
+autonomy_tier: 1
+acceptance_criteria:
+  - does a thing
+---
+Body A.
+SPEC
+cat > "$GTMP/tasks/fix-bbbbbb2222.md" <<'SPEC'
+---
+id: fix-bbbbbb2222
+title: Task B
+type: fix
+autonomy_tier: 1
+depends_on:
+  - fix-aaaaaa1111
+acceptance_criteria:
+  - does another thing
+---
+Body B.
+SPEC
+has_task() { python3 -c 'import sys,json;d=json.load(sys.stdin);print(any(t["taskId"]==sys.argv[1] for t in d["tasks"]))' "$1"; }
+is_deferred() { python3 -c 'import sys,json;d=json.load(sys.stdin);print(any(x["taskId"]==sys.argv[1] for x in d["deferred"]))' "$1"; }
+
+# Case 1: A is unmerged, so A is runnable but B (depends on A) is held back.
+out1="$(FORGE_TARGET_REPO="$GTMP" bash "$SCRIPTS_DIR/forge-context.sh" --all 2>/dev/null)"
+assert_eq "True" "$(printf '%s' "$out1" | has_task fix-aaaaaa1111)" "A (no deps) is runnable"
+assert_eq "True" "$(printf '%s' "$out1" | is_deferred fix-bbbbbb2222)" "B is deferred while A is unmerged"
+assert_eq "False" "$(printf '%s' "$out1" | has_task fix-bbbbbb2222)" "B is not in the runnable set while deferred"
+
+# Case 2: A parks at pr_open and its branch merges into base -> B becomes runnable.
+mkdir -p "$GTMP/.forge/runs/fix-aaaaaa1111"
+printf '{"status":"pr_open"}' > "$GTMP/.forge/runs/fix-aaaaaa1111/run.json"
+git -C "$GTMP" checkout -q -b forge/fix/aaaaaa1111
+printf 'A change\n' > "$GTMP/a.txt"
+git -C "$GTMP" add -A && git -C "$GTMP" commit -qm "task A"
+git -C "$GTMP" checkout -q develop
+git -C "$GTMP" merge -q --no-ff -m "merge A" forge/fix/aaaaaa1111
+out2="$(FORGE_TARGET_REPO="$GTMP" bash "$SCRIPTS_DIR/forge-context.sh" --all 2>/dev/null)"
+assert_eq "True" "$(printf '%s' "$out2" | has_task fix-bbbbbb2222)" "B is runnable once A is merged into base"
+assert_eq "False" "$(printf '%s' "$out2" | is_deferred fix-bbbbbb2222)" "B is no longer deferred once A is merged"
+rm -rf "$GTMP"
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
