@@ -34,7 +34,7 @@ Works in two modes from the same agents: on an **existing repo** the phases gath
       forge/
         .claude-plugin/
           plugin.json         # plugin manifest
-        commands/             # slash commands (/forge:run, /forge:run-all, /forge:approve, /forge:status)
+        commands/             # slash commands (/forge:draft, /forge:run, /forge:run-all, /forge:approve, /forge:status)
         workflows/            # forge-run.js — the pipeline orchestrator
         agents/               # one subagent per pipeline phase (forge-intake ... forge-report)
         scripts/              # launcher glue: config assembly, ingester, validators, outcome recorder
@@ -79,9 +79,10 @@ Forge is distributed as a local marketplace during development.
 In the repo where forge will work:
 
 1. (Optional) Create `.forge/config.yaml` — see `plugins/forge/examples/config.minimal.yaml` for the smallest valid config and `config.full.yaml` for every option. Validate it with `plugins/forge/scripts/validate-config.sh .forge/config.yaml`. A brand-new project can skip this and run on the engine defaults.
-2. Give forge a task, either way:
-   - **A raw prompt:** `/forge:run "add bounded retry with backoff to the HTTP client"`.
-   - **A spec file:** write `tasks/<id>.md` (see `plugins/forge/examples/` and `plugins/forge/docs/task-spec.md`), validate it with `plugins/forge/scripts/validate-task.sh tasks/<id>.md`, then run `/forge:run <id>`.
+2. Give forge work, any of these ways:
+   - **Draft specs from a freeform ask (best for several tasks):** `/forge:draft "add retry to the HTTP client; fix the flaky auth test; audit the rate limiter"`. Forge grounds each item in the repo, writes validated `tasks/<id>.md` specs, and flags any tasks that touch the same files (wiring `depends_on`) so they do not collide on a later `/forge:run-all`. Review the specs it writes, edit if needed, then run them.
+   - **A raw prompt for one task:** `/forge:run "add bounded retry with backoff to the HTTP client"`.
+   - **A hand-written spec file:** write `tasks/<id>.md` (see `plugins/forge/examples/` and `plugins/forge/docs/task-spec.md`), validate it with `plugins/forge/scripts/validate-task.sh tasks/<id>.md`, then run `/forge:run <id>`.
 3. Run the whole queue at once with `/forge:run-all`.
 4. For a gated `build` task that parks at `plan_gate`, review the plan and run `/forge:approve <id>` (or `/forge:approve <id> changes: <feedback>` to send it back for a re-plan).
 

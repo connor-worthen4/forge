@@ -90,7 +90,7 @@ adhoc_id="build-adhoc$(date +%Y%m%d%H%M%S)"
 
 python3 - "$selector" "$goal" "$adhoc_id" "$approved" "$mode" "$specs_json" \
          "$CONFIG" "$PLUGIN_DIR" "$TARGET" "$RUNS_DIR" <<'PY'
-import sys, os, re, json
+import sys, os, re, json, subprocess, shutil
 
 (selector, goal, adhoc_id, approved_s, mode, specs_s,
  config_path, plugin_dir, target, runs_dir) = sys.argv[1:11]
@@ -199,6 +199,82 @@ def feedback_for(task_id):
     return None
 
 
+# --- depends_on merge gate (run-all only) ---------------------------------
+#
+# A task is deferred from a /forge:run-all until every id in its `depends_on`
+# has landed in the base branch. This is the only way two tasks that edit the
+# same file avoid colliding without stacking: the dependent is held back until
+# the dependency is MERGED, then it cuts from a base that already contains the
+# dependency's work. Pure within-run ordering would not help - both would still
+# branch from the same unchanged base.
+
+_git_fetched = [False]
+
+
+def _run(args):
+    try:
+        return subprocess.run(args, cwd=target, capture_output=True, text=True)
+    except Exception:
+        return None
+
+
+def _ensure_fetch():
+    # Refresh remote-tracking refs once, so "merged into base" reflects the host.
+    # Best effort: a missing remote or offline run just falls back to local refs.
+    if _git_fetched[0]:
+        return
+    _git_fetched[0] = True
+    _run(["git", "fetch", "--quiet", "origin"])
+
+
+def _resolve_ref(branch):
+    for cand in ("origin/%s" % branch, branch):
+        r = _run(["git", "rev-parse", "--verify", "--quiet", cand])
+        if r is not None and r.returncode == 0:
+            return cand
+    return None
+
+
+def _merged_into_base(branch):
+    # True when `branch`'s commits are already an ancestor of the base branch,
+    # i.e. it was merged (fast-forward or merge commit). Squash merges rewrite
+    # history and are caught by the PR-state check instead.
+    base_ref = _resolve_ref(config["base_branch"])
+    branch_ref = _resolve_ref(branch)
+    if not base_ref or not branch_ref:
+        return False
+    r = _run(["git", "merge-base", "--is-ancestor", branch_ref, base_ref])
+    return r is not None and r.returncode == 0
+
+
+def _pr_merged(dep_id):
+    # True when the dependency's recorded PR is merged on the host. Covers squash
+    # merges and deleted branches that the git-ancestry check cannot see. Needs
+    # the gh CLI; absent it, this path is simply skipped.
+    p = os.path.join(runs_dir, dep_id, "pr.json")
+    if not os.path.exists(p):
+        return False
+    try:
+        number = json.load(open(p)).get("number")
+    except Exception:
+        return False
+    if not number or config["vcs"]["cli"] != "gh" or shutil.which("gh") is None:
+        return False
+    r = _run(["gh", "pr", "view", str(number), "--json", "state", "-q", ".state"])
+    return r is not None and r.returncode == 0 and r.stdout.strip() == "MERGED"
+
+
+def dep_satisfied(dep_id):
+    """A dependency is satisfied once its work is in the base branch."""
+    if read_run_status(dep_id) == "done":
+        return True
+    _ensure_fetch()
+    dep_type = dep_id.split("-", 1)[0]
+    if _merged_into_base(branch_name(dep_type, dep_id)):
+        return True
+    return _pr_merged(dep_id)
+
+
 def make_task(task_id, ttype, autonomy_tier, title, spec_file, goal_text):
     status = read_run_status(task_id)
     feedback = feedback_for(task_id)
@@ -228,6 +304,7 @@ def make_task(task_id, ttype, autonomy_tier, title, spec_file, goal_text):
 
 
 tasks = []
+deferred = []
 if selector == "--goal":
     tasks.append(make_task(adhoc_id, "build", None, goal[:72], None, goal))
 else:
@@ -236,8 +313,14 @@ else:
         tid = s.get("id")
         if not tid:
             continue
-        if selector == "--all" and read_run_status(tid) in SKIP_FOR_ALL:
-            continue
+        if selector == "--all":
+            if read_run_status(tid) in SKIP_FOR_ALL:
+                continue
+            # Defer the task until every dependency has merged into the base.
+            unmet = [d for d in (s.get("depends_on") or []) if not dep_satisfied(d)]
+            if unmet:
+                deferred.append({"taskId": tid, "waitingOn": unmet})
+                continue
         tasks.append(make_task(tid, s.get("type", "fix"),
                                s.get("autonomy_tier"), s.get("title"),
                                s.get("_file"), None))
@@ -247,6 +330,7 @@ out = {
     "repoRoot": target,
     "config": config,
     "tasks": tasks,
+    "deferred": deferred,
 }
 print(json.dumps(out, indent=2))
 PY

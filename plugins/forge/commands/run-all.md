@@ -26,9 +26,13 @@ Do exactly the following, then STOP:
 
 3. **Assemble the workflow args.** Run
    `"${CLAUDE_PLUGIN_ROOT}/scripts/forge-context.sh" --all`. It prints a JSON
-   object whose `tasks` array holds every runnable task. If `tasks` is empty,
-   report that there is nothing runnable (note any `plan_gate` items needing
-   approval) and STOP.
+   object: `tasks` holds every runnable task, and `deferred` holds tasks held back
+   because a `depends_on` dependency has not merged into the base branch yet (each
+   as `{taskId, waitingOn}`). This is how forge keeps tasks that share files from
+   colliding - a dependent waits until the task it depends on is merged, then it
+   branches from a base that already contains that work. If `tasks` is empty,
+   report that there is nothing runnable - list any `deferred` tasks and what they
+   wait on, and note any `plan_gate` items needing approval - then STOP.
 
 4. **Run the workflow.** Call the `Workflow` tool with `scriptPath` set to
    `${CLAUDE_PLUGIN_ROOT}/workflows/forge-run.js` and `args` set to the exact JSON
@@ -48,5 +52,7 @@ Do exactly the following, then STOP:
 
 7. **Report and STOP.** Print a compact summary: each task and its final state,
    the PR urls for `pr_open` tasks, which tasks parked at `plan_gate` (needing
-   `/forge:approve`) or `blocked`/`failed` (with reasons), and the conflict
-   check's findings.
+   `/forge:approve`) or `blocked`/`failed` (with reasons), the conflict check's
+   findings, and any `deferred` tasks with the dependency they wait on (each
+   becomes runnable on a later `/forge:run-all`, once that dependency's PR is
+   merged into the base).
