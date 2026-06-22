@@ -26,11 +26,26 @@ the spec's `scope` as the literal `unknown - investigate` rather than guessing.
 
 ## Do exactly the following, then STOP
 
-1. **Split the ask into discrete tasks.** Break `$ARGUMENTS` on clear boundaries
-   (`;`, newlines, numbered/bulleted lists, "and then"). Each item becomes one
-   task. A single ask is one task. If `$ARGUMENTS` is empty, print the usage line
-   and STOP. Treat "add X for later" the same as any other task - you are
-   capturing it, not running it.
+1. **Split the ask into right-sized tasks.** Break `$ARGUMENTS` on clear
+   boundaries (`;`, newlines, numbered/bulleted lists, "and then"). A single ask
+   is one task; if `$ARGUMENTS` is empty, print the usage line and STOP. Treat
+   "add X for later" like any other task - you are capturing it, not running it.
+
+   Right-size deliberately - prefer FEWER, COARSER tasks:
+   - One task is one coherent unit a human would want to review and merge as a
+     single PR. A change that spans several files but accomplishes one thing is
+     ONE task, not one per file. When unsure whether to split, do not.
+   - Do NOT decompose work into a deep dependency chain. Every `depends_on` edge
+     becomes a separate review-and-merge round for the human (forge never merges;
+     a dependent waits until its prerequisite's PR is merged into the base), so an
+     N-deep chain costs N sequential merges. Only split where the pieces are
+     genuinely independent or separately reviewable.
+   - Greenfield (the repo is empty or has no commit): scaffold the project as ONE
+     foundational task - package skeleton, config, and a first working,
+     test-covered slice - not a chain of dependent tasks. There is nothing to
+     collide with yet, so a chain buys no collision safety and only adds merge
+     rounds. Layer further capability as separate tasks once that foundation
+     exists and is merged.
 
 2. **Ground each task in the repo (read-only).** For each item, with
    `grep`/`glob`/targeted reads:
@@ -68,10 +83,13 @@ the spec's `scope` as the literal `unknown - investigate` rather than guessing.
    predecessor (higher `priority`, else the one whose change the other builds on,
    else the first mentioned) and set the other task's `depends_on` to include the
    predecessor's id, so the two are sequenced rather than run blind in parallel.
-   Then, in your report (step 9), flag the overlap explicitly and offer the human
-   the three real options: **combine** the tasks into one spec, **re-scope** them
-   to disjoint files, or keep them **sequenced** (merge the predecessor's PR
-   before running the dependent). Never hide an overlap; surface it.
+   Set `depends_on` ONLY for a genuine collision or a hard build-order need - each
+   edge is another PR the human must merge before the dependent can run, so prefer
+   **combining** the two into one task over building a chain. Then, in your report
+   (step 9), flag the overlap explicitly and offer the human the three real
+   options: **combine** the tasks into one spec, **re-scope** them to disjoint
+   files, or keep them **sequenced** (merge the predecessor's PR before running
+   the dependent). Never hide an overlap; surface it.
 
 6. **Write each spec** to `tasks/<id>.md` with YAML frontmatter then a prose body.
    Frontmatter, in this order, omitting any optional field you have nothing for:
