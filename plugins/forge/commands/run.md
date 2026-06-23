@@ -40,8 +40,9 @@ Do exactly the following, then STOP:
 5. **Check for cross-PR conflicts (only if a PR was opened).** If the task reached
    `pr_open`, run `"${CLAUDE_PLUGIN_ROOT}/scripts/check-conflicts.sh"` to see
    whether the new PR collides with any other open forge PR on sequential merge
-   (each can be clean against the base yet conflict with a sibling). Mention any
-   collisions in your report.
+   (each can be clean against the base yet conflict with a sibling), or is
+   STACKED on one (its branch already contains a sibling's commits, so merge
+   order matters). Mention any collisions or stacks in your report.
 
 6. **Report and STOP.** State the final state for the task: `pr_open` (give the PR
    url), `done` (tier-0 report at `.forge/runs/<id>/report.md`), `plan_gate`

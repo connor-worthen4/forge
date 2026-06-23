@@ -11,7 +11,7 @@
 # `permissionDecision: "deny"` to stdout and exits 0, so the decision is honored
 # in every permission mode, including --dangerously-skip-permissions. The one
 # known leak (a matching permissions.allow rule taking precedence) and the
-# authoritative control (GitHub branch protection) are documented in README.md.
+# authoritative control (GitHub branch protection) are documented in hooks/README.md.
 #
 # Input:  PreToolUse JSON on stdin (tool_name, tool_input.command, cwd).
 # Source: protected branches resolve from .forge/config.yaml (relative to cwd) >

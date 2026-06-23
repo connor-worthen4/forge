@@ -1,9 +1,9 @@
 // forge-run.js - the forge per-task pipeline as a Claude Code Workflow.
 //
-// This is the orchestrator that replaces the old bash state machine
-// (run-task.sh + run-phase.sh). It is launched from a live Claude Code session
-// by the /forge and /forge-run slash commands, which read the project config
-// and task specs, then invoke this script with Workflow({scriptPath, args}).
+// This is the pipeline orchestrator. It is launched from a live Claude Code
+// session by the /forge:run and /forge:run-all slash commands, which read the
+// project config and task specs, then invoke this script with
+// Workflow({scriptPath, args}).
 //
 // The script runs in a sandbox: no filesystem, no clock, no randomness. It
 // owns control flow only. Everything that touches disk is done by the phase
@@ -203,7 +203,7 @@ async function runTask(task) {
   }
 
   // Tier 1 and approved tier 2 share the build/verify/review loop. A fresh
-  // tier-2 task parks at the plan gate after plan and waits for /forge-approve.
+  // tier-2 task parks at the plan gate after plan and waits for /forge:approve.
   if (startPhase === 'intake' || startPhase === 'plan') {
     if (startPhase === 'intake') {
       const i = await runPhase('intake', task, tier, 1)

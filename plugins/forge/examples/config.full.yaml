@@ -25,12 +25,6 @@ commands:
   lint: "npm run lint"
   typecheck: "npm run typecheck"
 
-# Optional project specialization. Phase agents fall back to the generic engine
-# behavior when these directories are absent.
-overrides:
-  agents_dir: .forge/agents
-  skills_dir: .forge/skills
-
 autonomy:
   default_tier: 1         # 0 read-only | 1 branch+PR | 2 gated
   require_gate: [build]   # task types forced to tier-2 plan approval (park at plan_gate)

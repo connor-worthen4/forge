@@ -128,6 +128,21 @@ json.dump(q, open(p, "w"), indent=2)
 PY
 }
 
+# Resolve a branch NAME to a ref that exists, preferring the remote-tracking
+# copy (origin/<branch>) over the local branch so comparisons match what the
+# host will actually merge. A local branch can lag the remote after sibling PRs
+# merge; trusting it produces a stale merge-base. Prints the resolved ref, or
+# nothing when neither exists. Run from inside the target repo.
+#   forge_resolve_ref <branch>
+forge_resolve_ref() {
+  local b="$1"
+  if git rev-parse --verify --quiet "origin/$b" >/dev/null; then
+    printf 'origin/%s' "$b"
+  elif git rev-parse --verify --quiet "$b" >/dev/null; then
+    printf '%s' "$b"
+  fi
+}
+
 # Merge a JSON fragment into a task's run record (run.json), stamping timestamps.
 #   run_update <task_id> <json-object-fragment>
 run_update() {

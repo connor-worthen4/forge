@@ -13,6 +13,12 @@
 # merge them in a deliberate order (or split the shared file into a
 # registry/extension point) instead of discovering the conflict mid-merge.
 #
+# It also reports STACKED pairs: when one PR's branch was cut on top of another
+# (so its history already contains the other's commits), the two never show as a
+# file conflict, yet merge order is load-bearing - merging the descendant first
+# silently pulls the contained PR in with it. File-overlap alone is blind to
+# this; ancestry (`git merge-base --is-ancestor`) catches it.
+#
 # Usage:
 #   check-conflicts.sh [base_branch]
 #       Inspect every open PR whose head branch is under "forge/" and whose
@@ -53,24 +59,13 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 2
 fi
 
-# Resolve a branch name to a ref that exists locally, preferring the
-# remote-tracking copy (origin/<branch>) so we compare what the host will merge.
-resolve_ref() {
-  local b="$1"
-  if git rev-parse --verify --quiet "origin/$b" >/dev/null; then
-    printf 'origin/%s' "$b"
-  elif git rev-parse --verify --quiet "$b" >/dev/null; then
-    printf '%s' "$b"
-  fi
-}
-
 refs=()
 labels=()
 
 if [ -n "$refs_arg" ]; then
   # Explicit refs: label each by its own name.
   for b in $refs_arg; do
-    r="$(resolve_ref "$b")"
+    r="$(forge_resolve_ref "$b")"
     if [ -z "$r" ]; then
       echo "check-conflicts: ref not found, skipping: $b" >&2
       continue
@@ -89,7 +84,7 @@ else
     prs_json="$(gh pr list --state open --base "$base" --json number,headRefName,title 2>/dev/null)" || prs_json="[]"
     while IFS=$'\t' read -r num head title; do
       [ -n "$head" ] || continue
-      r="$(resolve_ref "$head")"
+      r="$(forge_resolve_ref "$head")"
       [ -n "$r" ] || continue
       refs+=("$r")
       labels+=("PR #$num ($title)")
@@ -114,26 +109,40 @@ if [ "$n" -lt 2 ]; then
   exit 0
 fi
 
-# Pairwise three-way merge simulation. merge-tree exits 0 on a clean merge and 1
-# on conflicts; anything higher is a real error (e.g. unrelated histories).
+# Pairwise check. First test ancestry: a stacked pair (one branch contains the
+# other) never conflicts on merge-tree, so report the stack and skip the merge
+# sim for that pair. Otherwise simulate the three-way merge - merge-tree exits 0
+# on a clean merge and 1 on conflicts; anything higher is a real error (e.g.
+# unrelated histories).
 collisions=0
+stacks=0
 i=0
 while [ "$i" -lt "$n" ]; do
   j=$((i + 1))
   while [ "$j" -lt "$n" ]; do
-    out="$(git merge-tree --write-tree --name-only "${refs[$i]}" "${refs[$j]}" 2>&1)"
-    rc=$?
-    if [ "$rc" -eq 1 ]; then
-      collisions=$((collisions + 1))
-      files="$(printf '%s\n' "$out" | awk 'NR==1{next} /^$/{exit} {print}')"
-      echo "  CONFLICT  ${labels[$i]}  <->  ${labels[$j]}"
-      if [ -n "$files" ]; then
-        printf '%s\n' "$files" | sed 's/^/              /'
-      else
-        echo "              (shared files; run the merge to see them)"
+    if git merge-base --is-ancestor "${refs[$i]}" "${refs[$j]}" 2>/dev/null; then
+      stacks=$((stacks + 1))
+      echo "  STACK     ${labels[$j]}  contains  ${labels[$i]}"
+      echo "              merge ${labels[$i]} first; it is part of ${labels[$j]}'s history."
+    elif git merge-base --is-ancestor "${refs[$j]}" "${refs[$i]}" 2>/dev/null; then
+      stacks=$((stacks + 1))
+      echo "  STACK     ${labels[$i]}  contains  ${labels[$j]}"
+      echo "              merge ${labels[$j]} first; it is part of ${labels[$i]}'s history."
+    else
+      out="$(git merge-tree --write-tree --name-only "${refs[$i]}" "${refs[$j]}" 2>&1)"
+      rc=$?
+      if [ "$rc" -eq 1 ]; then
+        collisions=$((collisions + 1))
+        files="$(printf '%s\n' "$out" | awk 'NR==1{next} /^$/{exit} {print}')"
+        echo "  CONFLICT  ${labels[$i]}  <->  ${labels[$j]}"
+        if [ -n "$files" ]; then
+          printf '%s\n' "$files" | sed 's/^/              /'
+        else
+          echo "              (shared files; run the merge to see them)"
+        fi
+      elif [ "$rc" -gt 1 ]; then
+        echo "  SKIP      ${labels[$i]}  <->  ${labels[$j]}  (cannot compare: ${out%%$'\n'*})"
       fi
-    elif [ "$rc" -gt 1 ]; then
-      echo "  SKIP      ${labels[$i]}  <->  ${labels[$j]}  (cannot compare: ${out%%$'\n'*})"
     fi
     j=$((j + 1))
   done
@@ -141,11 +150,19 @@ while [ "$i" -lt "$n" ]; do
 done
 
 echo
-if [ "$collisions" -eq 0 ]; then
-  echo "  no overlaps: all $n open forge PRs merge cleanly against each other."
+if [ "$collisions" -eq 0 ] && [ "$stacks" -eq 0 ]; then
+  echo "  no overlaps: all $n open forge PRs merge cleanly and independently."
 else
-  echo "  $collisions pair(s) will conflict on sequential merge. Merge one, then"
-  echo "  rebase/resolve the rest in order - or move the shared file behind a"
-  echo "  registry/extension point so the tasks stop co-editing it."
+  if [ "$stacks" -gt 0 ]; then
+    echo "  $stacks stacked pair(s): one PR's branch already contains another's commits."
+    echo "  They never show as a file conflict, but merge order is load-bearing - merge"
+    echo "  the contained PR first, or the later merge silently pulls it in. Treat a"
+    echo "  stack as an ordered series, not independent PRs."
+  fi
+  if [ "$collisions" -gt 0 ]; then
+    echo "  $collisions pair(s) will conflict on sequential merge. Merge one, then"
+    echo "  rebase/resolve the rest in order - or move the shared file behind a"
+    echo "  registry/extension point so the tasks stop co-editing it."
+  fi
 fi
 exit 0
