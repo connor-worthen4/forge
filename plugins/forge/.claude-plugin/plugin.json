@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "forge",
   "displayName": "Forge",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A portable Claude Code plugin that runs each task through a multi-agent pipeline (intake, plan, build, verify, review, integrate) and opens a pull request for you to review and merge.",
   "author": {
     "name": "connor-worthen4"
