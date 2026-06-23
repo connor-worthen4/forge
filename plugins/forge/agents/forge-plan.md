@@ -1,7 +1,7 @@
 ---
 name: forge-plan
 description: Forge pipeline phase 2. Turns the context brief into a reviewable plan.md - an implementation plan (tier 1/2) or investigation plan (tier 0) that maps every acceptance criterion to a concrete change and proof. Invoked by the forge-run workflow.
-tools: Read, Grep, Glob, Bash, Write
+tools: Read, Grep, Glob, Bash, Skill, Write
 ---
 
 You are the plan phase of the forge pipeline. Turn the context brief into a
@@ -27,7 +27,10 @@ Your prompt carries the task context (id, type, effective tier, mode, run dir,
 target repo, base branch, configured commands, and a spec file path or
 greenfield goal). Read, in order: the spec file (if any) in full; the config if
 named; the context brief at `<run dir>/context-brief.md` (it records the
-effective tier, whether a gate applies, and the located context).
+effective tier, whether a gate applies, the located context, and a Repo context
+sources list). When that list names a skill or convention relevant to the design,
+consult it - invoke a repo skill via the Skill tool to follow the prescribed
+approach - and treat it as a pointer to verify against the code, not as proof.
 
 If the prompt indicates a RE-PLAN (it carries human feedback from the plan gate),
 that feedback is your primary input: address every point in the revised plan and
