@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Configure git identity (test fixtures create commits)
+        run: |
+          git config --global user.email "ci@forge.test"
+          git config --global user.name "Forge CI"
+          git config --global init.defaultBranch main
+
+      - name: Verify required tools
+        run: |
+          jq --version
+          python3 --version
+          bash --version | head -1
+
+      - name: Validate plugin manifests
+        run: |
+          jq -e . .claude-plugin/marketplace.json > /dev/null
+          jq -e . plugins/forge/.claude-plugin/plugin.json > /dev/null
+          echo "manifests parse"
+
+      - name: Guardrail hook tests
+        run: bash plugins/forge/hooks/test/run-tests.sh
+
+      - name: Launcher script tests
+        run: bash plugins/forge/scripts/test/run-tests.sh
+
+      - name: ShellCheck (advisory)
+        run: |
+          files=$(find plugins/forge -name '*.sh' -type f | sort)
+          echo "Linting:"; echo "$files"
+          shellcheck $files || echo "::warning::ShellCheck reported findings (advisory, non-blocking)"
