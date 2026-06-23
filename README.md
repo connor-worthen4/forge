@@ -1,10 +1,8 @@
 # Forge
 
-A portable Claude Code plugin that turns a task into a reviewed pull request through a multi-agent pipeline — intake, plan, build, verify, review, integrate.
+A portable Claude Code plugin that takes a task — or a whole queue of them — and runs each through a multi-agent pipeline: intake, plan, build, verify, review, integrate. Every task lands as a pull request against your base branch. Forge never merges; a human reviews and merges the PR.
 
-A task flows through that pipeline and lands as a pull request into your base branch. Forge never merges; a human always reviews and merges the PR.
-
-The pipeline runs as a **Claude Code workflow** that you boot from your live session with a slash command. There is no daemon, no cron, and no separate API bill: forge runs inside Claude Code, governed by your plan. The engine is generic; project-specific configuration lives in each target repo's `.forge/config.yaml`, not in this repository.
+Forge sits on top of your repository and runs inside your Claude Code session, so every phase already has your code, history, and tooling in context. There is no daemon, no cron, and no separate service to run. The engine is generic; everything project-specific lives in each target repo's `.forge/config.yaml`, not in this repository.
 
 ## Why Forge instead of one big prompt?
 
@@ -13,7 +11,7 @@ Forge is a thin wrapper around Claude Code, not a separate service. Instead of o
 - **Grounded, not plausible.** Intake and plan must back every claim about your code with a real `path:line` or a command they ran — never an assertion from memory — and they file a context brief and a plan before any code is written. Build then implements that plan as the smallest diff, in your actual repository.
 - **Checked against criteria you set.** Verify runs your real `test` command and grades the result against the spec's explicit `acceptance_criteria`; review is a separate adversarial pass. A failing verify or review loops back to build, capped by `budget.max_attempts`, instead of declaring success.
 - **Bounded and inspectable.** Every phase leaves an artifact under `.forge/runs/<id>/` — brief, plan, diff, verdicts, PR record — that you can read. Risky `build` work pauses at a human plan gate before any code is written.
-- **Safe by construction.** The whole run executes in your session under your plan, with a PreToolUse hook that blocks merges and pushes to protected branches. Forge opens a PR and stops; it never merges. A human reviews and merges.
+- **Safe by construction.** The whole run executes in your Claude Code session, with a PreToolUse hook that blocks merges and pushes to protected branches. Forge opens a PR and stops; it never merges. A human reviews and merges.
 
 ## How it works
 
@@ -57,7 +55,7 @@ Runtime state (`.forge/queue.json`, `.forge/runs/`) lives in the target reposito
 ## Requirements
 
 - macOS or Linux with bash 3.2+
-- [Claude Code](https://code.claude.com) (`claude`) — the pipeline runs as a workflow inside a Claude Code session
+- [Claude Code](https://code.claude.com) (`claude`) — forge runs inside a Claude Code session
 - `git`, `jq`, and `python3` (PyYAML recommended; a ruby fallback handles the YAML parsing otherwise)
 - `gh` (GitHub CLI), or `glab` for GitLab, to open PRs/MRs
 
@@ -85,7 +83,13 @@ Forge is distributed as a local marketplace during development.
 
 ## Project setup
 
-Forge keeps no project knowledge in this repo. Everything project-specific lives in two places in the target repo, and the split between what you commit and what you ignore matters:
+Forge keeps no project knowledge in this repo; it adapts to whatever repository you point it at. A repo is compatible once it meets a few prerequisites:
+
+- **A git repo with a remote on a supported host.** Forge opens real pull requests, so the target must be a git repository whose remote is on GitHub or GitLab, with the matching CLI installed and authenticated — `gh auth login` for GitHub, `glab auth login` for GitLab.
+- **A base branch that already exists.** Forge cuts every working branch from your base branch and targets its PRs there, so that branch must exist before the first run. The default is `develop`; if your repo integrates into `main` (or anything else), set `base_branch` and `vcs.pr_target` in the config rather than creating a branch you do not use.
+- **Build and test commands forge can run.** The verify phase shells out to your real `test` command and grades the result, so any repo with code-changing tasks needs at least a working test command declared in the config.
+
+With those in place, everything project-specific lives in two places in the target repo (`.forge/` and `tasks/`), and the split between what you commit and what you ignore matters:
 
     your-repo/
       .forge/

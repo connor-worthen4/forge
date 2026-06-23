@@ -83,9 +83,8 @@ the others, and a synth pass consolidates and de-duplicates their findings into
 
 ## Budget semantics
 
-forge runs inside your live Claude Code session, so there is no separate API bill
-to cap; usage is governed by your Claude Code plan. The `budget` block therefore
-controls only the pipeline's behavior, not money:
+forge runs inside your Claude Code session rather than as a separate service, so
+the `budget` block controls only the pipeline's behavior, not spending:
 
 - **Retry cap.** `budget.max_attempts` caps the combined verify->build and
   review->build recovery loops per task. Once exhausted, the task parks `blocked`
