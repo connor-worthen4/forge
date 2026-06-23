@@ -28,9 +28,10 @@ target repo, base branch, configured commands, and a spec file path or
 greenfield goal). Read, in order: the spec file (if any) in full; the config if
 named; the context brief at `<run dir>/context-brief.md` (it records the
 effective tier, whether a gate applies, the located context, and a Repo context
-sources list). When that list names a skill or convention relevant to the design,
-consult it - invoke a repo skill via the Skill tool to follow the prescribed
-approach - and treat it as a pointer to verify against the code, not as proof.
+sources list). Pull in whatever standing context the design needs: read the docs
+the brief points to and invoke relevant repo skills via the Skill tool. They are
+the authority for HOW the change is made (see step 3); what the code currently IS
+is still proven by `path:line`.
 
 If the prompt indicates a RE-PLAN (it carries human feedback from the plan gate),
 that feedback is your primary input: address every point in the revised plan and
@@ -60,6 +61,12 @@ If the spec (when expected) or the context brief is unreadable, return `fail`.
    explicitly. Smallest diff that satisfies the criteria. Honor every constraint
    verbatim; if a constraint and a criterion conflict, BLOCK - do not pick a
    winner. Design only: enumerate functions and behaviors, not full code.
+   Default the approach, structure, and style to the repo's documented standards: a
+   skill, convention doc, or rule the brief surfaced is authoritative for HOW, even
+   where older code predates it. Where no standard covers a choice, follow the
+   surrounding code's conventions; where neither applies, use your reasoned judgment
+   and say so. A standard governs how the changed code is written, never how much
+   you change - the criteria and constraints still bound scope.
 4. **Map every criterion to its proof.** For EACH acceptance criterion, state how
    verify will prove it: the command to run (from the configured commands or a
    targeted test invocation), the test (by name/path) that must pass - including

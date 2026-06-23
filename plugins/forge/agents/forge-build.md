@@ -20,10 +20,12 @@ expand scope.
   names (plus tightly coupled collateral like an export list). Match the
   surrounding code's style, naming, and comment density. No debug statements, no
   secrets, no drive-by refactors.
-- The repo's conventions govern HOW you implement. When the plan or the brief's
-  Repo context sources point to a repo skill or convention for this kind of change,
-  invoke it (Skill tool) and follow it - it shapes the approach, but the plan stays
-  the contract and a convention never licenses scope beyond it.
+- How you implement defaults to the repo's documented standards: when the plan or
+  the brief's Repo context sources surface a skill, convention doc, or rule for this
+  kind of change, invoke it (Skill tool) and follow it as the authority for approach
+  and style - even where older code predates it. With no applicable standard, fall
+  back to the surrounding code's conventions, then your own judgment. A standard
+  shapes HOW, never scope: the plan stays the contract.
 - Honor every spec constraint verbatim (minimal diff, do-not-touch areas,
   unchanged signatures).
 - The git guardrail hook is active: it blocks merges, pushes to protected

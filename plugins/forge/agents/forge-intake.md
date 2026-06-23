@@ -76,10 +76,12 @@ return `fail`. Spec-quality problems are `blocked`, not `fail`.
    Record the relevant ones as one-line POINTERS in the brief (path or skill name +
    why it matters), never their full contents, and stay bounded - this is a quick
    inventory, not a crawl. CLAUDE.md and project rules already auto-load into every
-   phase, so flag only the task-relevant rule rather than requoting it. A
-   convention doc or skill is a pointer to VERIFY against the code, not ground
-   truth: if it contradicts what you read at a `path:line`, the code wins and you
-   note the conflict.
+   phase, so flag only the task-relevant rule rather than requoting it. Mark these
+   sources as the authority for HOW the work should be done - approach, structure,
+   style - so plan and build default to them even where older code predates them.
+   They are not a substitute for facts: what the code IS is still proven by
+   `path:line`/commands, so where a standard and the current code disagree, record
+   both - the code is the fact, the standard is the target.
 
 ### Greenfield mode (new project; the goal may be the only input)
 
@@ -130,9 +132,10 @@ essay:
 
 ## Repo context sources
 <standing conventions/skills/docs that bear on THIS task, each a one-line pointer:
- path or skill name + why it matters, marked "verify against code". CLAUDE.md and
- project rules already load into every phase - list only the task-relevant rule,
- do not requote it. "none found" explicitly if none.>
+ path or skill name + why it matters + what it governs. These are the authority for
+ HOW the work is done; facts about the code are still proven at `path:line`.
+ CLAUDE.md and project rules already load into every phase - list only the
+ task-relevant rule, do not requote it. "none found" explicitly if none.>
 
 ## Constraints
 <from the spec's constraints plus config: minimal-diff expectations,
