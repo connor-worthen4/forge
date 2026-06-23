@@ -9,6 +9,7 @@ Forge sits on top of your repository and runs inside your Claude Code session, s
 Forge is a thin wrapper around Claude Code, not a separate service. Instead of one long conversation that drifts as it grows, each step is a fresh, single-purpose agent with a least-privilege tool set that reads the previous step's filed artifact and writes its own. That buys what a single prompt does not:
 
 - **Grounded, not plausible.** Intake and plan must back every claim about your code with a real `path:line` or a command they ran — never an assertion from memory — and they file a context brief and a plan before any code is written. Build then implements that plan as the smallest diff, in your actual repository.
+- **Tuned to your repo, not generic.** Forge carries no conventions of its own — your repository supplies them. Intake inventories the standing guidance the repo already provides (`CLAUDE.md`, repo-local skills and agents, contributing and design docs, linter rules) and records what bears on the task in the context brief; plan and build then default to those documented standards — invoking your repo's skills to do the work its way — and fall back to your existing code only where no standard applies. The standards govern *how* a change is made; what the code *is* stays proven by `path:line`.
 - **Checked against criteria you set.** Verify runs your real `test` command and grades the result against the spec's explicit `acceptance_criteria`; review is a separate adversarial pass. A failing verify or review loops back to build, capped by `budget.max_attempts`, instead of declaring success.
 - **Bounded and inspectable.** Every phase leaves an artifact under `.forge/runs/<id>/` — brief, plan, diff, verdicts, PR record — that you can read. Risky `build` work pauses at a human plan gate before any code is written.
 - **Safe by construction.** The whole run executes in your Claude Code session, with a PreToolUse hook that blocks merges and pushes to protected branches. Forge opens a PR and stops; it never merges. A human reviews and merges.
@@ -20,7 +21,7 @@ Forge is a thin wrapper around Claude Code, not a separate service. Instead of o
 - The agents do the disk work: they read the spec, config, and prior artifacts, and write their own artifact into `.forge/runs/<task-id>/`. After the workflow returns, the launcher stamps the run record and queue.
 - A PreToolUse hook (`hooks/block-git-writes.sh`) blocks merges and pushes to protected branches throughout.
 
-Works in two modes from the same agents: on an **existing repo** the phases gather real `path:line` context; on a **greenfield** project (or a raw prompt with no spec) they propose structure and scaffold from zero.
+Works in two modes from the same agents: on an **existing repo** the phases gather real `path:line` context and adopt the conventions the repo documents; on a **greenfield** project (or a raw prompt with no spec) they propose structure and scaffold from zero.
 
 ## How a task flows
 

@@ -5,6 +5,12 @@ project-specific lives in a per-repo **`.forge/config.yaml`** that the forge-run
 workflow and its phase agents read at runtime. This file is the engine-vs-project
 seam: the engine stays generic, and each repo customizes it through this config.
 
+The target repo supplies that knowledge through two channels: this declared config
+(commands, branches, gating, models), and the standing conventions the phases read
+at runtime — `CLAUDE.md`, repo-local skills and agents, contributing and design
+docs, and linter rules. The config covers what forge must be told; it does not
+restate conventions the repo already documents.
+
 This contract is project-agnostic. Nothing here is specific to any single target
 repository.
 
