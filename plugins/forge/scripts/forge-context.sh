@@ -3,7 +3,7 @@
 # forge-context.sh - assemble the `args` payload for the forge-run workflow.
 #
 # The forge-run.js workflow runs in a sandbox with no filesystem access, so the
-# launcher commands (/forge, /forge-run, /forge-approve) call this script to do
+# launcher commands (/forge:run, /forge:run-all, /forge:approve) call this script to do
 # all the deterministic, disk-touching work up front: resolve the project config,
 # pick the task(s), detect greenfield-vs-existing mode, compute branch names, and
 # read each task's run record for approval/re-plan state. It prints a single JSON
@@ -15,7 +15,7 @@
 #   forge-context.sh --goal "<prompt>"           ad-hoc greenfield task (no spec)
 #
 # --approved marks a tier-2 task whose plan the human accepted (skips to build).
-# A plan-feedback.md in the run dir (written by /forge-approve ... changes:)
+# A plan-feedback.md in the run dir (written by /forge:approve ... changes:)
 # triggers a re-plan instead.
 #
 # Deps: jq, python3 (PyYAML or ruby), git, forge-lib.sh, validate-task.sh.
@@ -156,7 +156,7 @@ if isinstance(review_lenses, list) and review_lenses:
     config["review_lenses"] = review_lenses
 
 # Statuses that are terminal or parked: --all skips them (plan_gate needs
-# /forge-approve; the rest are finished or need a human).
+# /forge:approve; the rest are finished or need a human).
 SKIP_FOR_ALL = {"plan_gate", "pr_open", "done", "blocked", "failed"}
 GATE_PASSED = {"building", "verifying", "reviewing", "integrating"}
 

@@ -61,15 +61,6 @@
         "typecheck": { "type": "string", "default": "", "description": "Type-check command." }
       }
     },
-    "overrides": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Optional project specialization. Phase agents fall back to the generic engine behavior when these dirs are absent.",
-      "properties": {
-        "agents_dir": { "type": "string", "default": ".forge/agents", "description": "Directory of project-specific agent overrides." },
-        "skills_dir": { "type": "string", "default": ".forge/skills", "description": "Directory of project-specific skill overrides." }
-      }
-    },
     "autonomy": {
       "type": "object",
       "additionalProperties": false,
@@ -86,7 +77,7 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/taskType" },
           "default": ["build"],
-          "description": "Task types forced to tier-2 plan approval regardless of their own tier. Such tasks park at plan_gate until /forge-approve."
+          "description": "Task types forced to tier-2 plan approval regardless of their own tier. Such tasks park at plan_gate until /forge:approve."
         }
       }
     },

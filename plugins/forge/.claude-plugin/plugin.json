@@ -3,7 +3,7 @@
   "name": "forge",
   "displayName": "Forge",
   "version": "0.4.0",
-  "description": "Raw task in, tempered PR out — an agentic software factory for Claude Code, portable across any repo.",
+  "description": "A portable Claude Code plugin that turns a task into a reviewed pull request through a multi-agent pipeline — intake, plan, build, verify, review, integrate.",
   "author": {
     "name": "connor-worthen4"
   },
@@ -13,7 +13,7 @@
     "agentic",
     "pipeline",
     "automation",
-    "software-factory",
+    "pull-requests",
     "code-review"
   ]
 }
