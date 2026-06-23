@@ -3,12 +3,12 @@
   "owner": {
     "name": "connor-worthen4"
   },
-  "description": "Forge marketplace — catalog for the Forge agentic software factory plugin.",
+  "description": "Forge marketplace — catalog for the Forge plugin.",
   "plugins": [
     {
       "name": "forge",
       "source": "./plugins/forge",
-      "description": "Raw task in, tempered PR out — an agentic software factory for Claude Code, portable across any repo."
+      "description": "A portable Claude Code plugin that turns a task into a reviewed pull request through a multi-agent pipeline — intake, plan, build, verify, review, integrate."
     }
   ]
 }

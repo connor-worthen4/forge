@@ -1,6 +1,6 @@
 # Forge
 
-Raw task in, tempered PR out — an agentic software factory for Claude Code, portable across any repo.
+A portable Claude Code plugin that turns a task into a reviewed pull request through a multi-agent pipeline — intake, plan, build, verify, review, integrate.
 
 Forge is a portable Claude Code plugin. A task flows through an agent pipeline — intake, plan, build, verify, review, integrate — and lands as a pull request into your base branch. Forge never merges; a human always reviews and merges the PR.
 
@@ -114,7 +114,7 @@ plugins/forge/scripts/test/run-tests.sh  # config_get unit tests
 ## Branches
 
 - `main` — stable baseline.
-- `develop` — integration target. The factory opens pull requests against `develop`; a human reviews and merges them.
+- `develop` — integration target. Forge opens pull requests against `develop`; a human reviews and merges them.
 
 ## License
 

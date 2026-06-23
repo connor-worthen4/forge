@@ -7,7 +7,7 @@
 # {task_id, type, priority, status, depends_on, file} entries (status "pending",
 # default priority "P2"), sorted by priority then task_id. This is the queue
 # shape every consumer expects, so a queue built here is fully usable by
-# forge-context.sh and the /forge-run command.
+# forge-context.sh and the /forge:run command.
 #
 # This is the simplest possible source. Any other ingester (cli, issue, notion,
 # ...) must satisfy the same contract documented in docs/task-spec.md: emit task
