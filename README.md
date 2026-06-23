@@ -1,5 +1,8 @@
 # Forge
 
+[![CI](https://github.com/connor-worthen4/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/connor-worthen4/forge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A portable Claude Code plugin that takes a task — or a whole queue of them — and runs each through a multi-agent pipeline: intake, plan, build, verify, review, integrate. Every task lands as a pull request against your base branch. Forge never merges; a human reviews and merges the PR.
 
 Forge sits on top of your repository and runs inside your Claude Code session, so every phase already has your code, history, and tooling in context. There is no daemon, no cron, and no separate service to run. The engine is generic; everything project-specific lives in each target repo's `.forge/config.yaml`, not in this repository.
@@ -62,13 +65,15 @@ Runtime state (`.forge/queue.json`, `.forge/runs/`) lives in the target reposito
 
 ## Install
 
-Forge is distributed as a local marketplace during development.
-
-1. Add the marketplace, pointing it at this repository's absolute path:
+1. Add the marketplace from this repository:
 
    ```
-   /plugin marketplace add /absolute/path/to/forge
+   /plugin marketplace add connor-worthen4/forge
    ```
+
+   Claude Code clones the repo and reads its root `marketplace.json`. For local
+   development against a checkout, point it at the path instead:
+   `/plugin marketplace add /absolute/path/to/forge`.
 
 2. Install the plugin from the marketplace:
 
