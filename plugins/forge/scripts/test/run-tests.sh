@@ -148,5 +148,59 @@ assert_eq "False" "$(printf '%s' "$out2" | is_deferred fix-bbbbbb2222)" "B is no
 rm -rf "$GTMP"
 
 echo
+echo "check-conflicts flags a stacked pair (one branch's history contains another):"
+STMP="$(mktemp -d)"
+git -C "$STMP" init -q -b main
+git -C "$STMP" config user.email tester@forge.test
+git -C "$STMP" config user.name "forge tester"
+printf 'seed\n' > "$STMP/seed.txt"
+git -C "$STMP" add -A && git -C "$STMP" commit -qm base
+git -C "$STMP" checkout -q -b feat-x && printf 'x\n' > "$STMP/x.txt" && git -C "$STMP" add -A && git -C "$STMP" commit -qm x
+git -C "$STMP" checkout -q -b feat-y && printf 'y\n' > "$STMP/y.txt" && git -C "$STMP" add -A && git -C "$STMP" commit -qm y
+git -C "$STMP" checkout -q main
+sc_out="$(FORGE_TARGET_REPO="$STMP" bash "$SCRIPTS_DIR/check-conflicts.sh" --base main --refs "feat-x feat-y" 2>&1)"
+case "$sc_out" in *STACK*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "reports a stack when one branch contains the other"
+case "$sc_out" in *contains*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "names the containment relationship"
+case "$sc_out" in *CONFLICT*) got=yes ;; *) got=no ;; esac
+assert_eq "no" "$got" "a pure stack is not mis-reported as a file conflict"
+rm -rf "$STMP"
+
+echo
+echo "forge-diff scopes the diff to the task, excluding already-merged sibling work:"
+DTMP="$(mktemp -d)"
+DBARE="$(mktemp -d)"
+git init -q --bare -b develop "$DBARE" >/dev/null 2>&1
+git -C "$DTMP" init -q -b develop
+git -C "$DTMP" config user.email tester@forge.test
+git -C "$DTMP" config user.name "forge tester"
+git -C "$DTMP" remote add origin "$DBARE"
+printf 'seed\n' > "$DTMP/seed.txt"
+git -C "$DTMP" add -A && git -C "$DTMP" commit -qm base
+seed_sha="$(git -C "$DTMP" rev-parse HEAD)"
+git -C "$DTMP" push -q origin develop
+# Sibling task A lands on the remote base: branch, commit, merge, push.
+git -C "$DTMP" checkout -q -b forge/fix/aaa && printf 'A\n' > "$DTMP/sibling.txt"
+git -C "$DTMP" add -A && git -C "$DTMP" commit -qm "task A: sibling.txt"
+git -C "$DTMP" checkout -q develop && git -C "$DTMP" merge -q --no-ff -m "merge A" forge/fix/aaa
+git -C "$DTMP" push -q origin develop
+# Make the LOCAL base stale (origin/develop keeps A); stack task B on A's branch.
+git -C "$DTMP" reset -q --hard "$seed_sha"
+git -C "$DTMP" checkout -q -b forge/fix/bbb forge/fix/aaa && printf 'B\n' > "$DTMP/mine.txt"
+git -C "$DTMP" add -A && git -C "$DTMP" commit -qm "task B: mine.txt"
+# The stale-local-base diff (the original bug) drags the merged sibling file in.
+stale_diff="$(git -C "$DTMP" diff "$(git -C "$DTMP" merge-base develop HEAD)" HEAD --name-only)"
+case "$stale_diff" in *sibling.txt*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "stale local base diff drags in the merged sibling file (the bug)"
+# forge-diff resolves the up-to-date origin base and scopes to task B only.
+fd_out="$(FORGE_TARGET_REPO="$DTMP" bash "$SCRIPTS_DIR/forge-diff.sh" develop 2>/dev/null)"
+case "$fd_out" in *mine.txt*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "forge-diff includes this task's file"
+case "$fd_out" in *sibling.txt*) got=yes ;; *) got=no ;; esac
+assert_eq "no" "$got" "forge-diff excludes the already-merged sibling file"
+rm -rf "$DTMP" "$DBARE"
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

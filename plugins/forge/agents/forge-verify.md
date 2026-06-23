@@ -34,8 +34,9 @@ verification map). If the spec (when expected) or plan is unreadable, return
 
 1. **Confirm there is work to grade.** Check out the task branch if you are not
    on it (confirm with `git rev-parse --abbrev-ref HEAD`). If the branch does not
-   exist, or `git diff <base>...HEAD` is empty, build did not deliver: return
-   `fail` saying exactly that.
+   exist, or the diff against the up-to-date base is empty
+   (`bash "<forge plugin dir>/scripts/forge-diff.sh" "<base>"`), build did not
+   deliver: return `fail` saying exactly that.
 2. **Run the configured checks.** From the configured commands, run each
    non-empty one once: `test` (always), then `build`, `lint`, `typecheck`. Record
    the exact command, its exit code, and on failure the failing excerpt (the
