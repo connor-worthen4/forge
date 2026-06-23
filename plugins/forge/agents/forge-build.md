@@ -51,7 +51,15 @@ base is the spec's `base_branch`, else config, else `develop`.
 - If the branch already exists locally, check it out and continue the work in
   progress (phases are idempotent; read `git status` and `git log <base>..HEAD`
   to see where a crash left off).
-- Otherwise create it from the base: `git checkout -b <branch> <base>`.
+- Otherwise create it from an up-to-date base, so a stale local base ref (one
+  that has not advanced since sibling PRs merged into the remote) does not seed
+  the branch with already-merged work. Refresh first, then branch from
+  `origin/<base>` when it exists, else the local `<base>`:
+  ```
+  git fetch --quiet origin || true
+  base_ref="<base>"; git rev-parse --verify --quiet "origin/<base>" >/dev/null && base_ref="origin/<base>"
+  git checkout -b <branch> "$base_ref"
+  ```
 - Greenfield mode: the repo may be empty. If it is not a git repo, `git init`. If
   the base branch does not exist yet, create it with an initial commit (e.g. a
   README or `.gitignore`) so there is a base to branch from, then cut the forge
@@ -82,10 +90,13 @@ uncommitted work. Do not push.
 
 ### 6. File the diff and return
 
-Write the branch's full diff against the base to the artifact:
+Write the branch's full diff against the base to the artifact. Use the plugin's
+diff script, which diffs against the up-to-date base (`origin/<base>` when it
+exists) so the patch is scoped to this task and never drags in files that
+sibling PRs already merged:
 
 ```
-git diff "$(git merge-base <base> HEAD)" HEAD > "<run dir>/diff.patch"
+bash "<forge plugin dir>/scripts/forge-diff.sh" "<base>" > "<run dir>/diff.patch"
 ```
 
 An empty diff.patch means you did not do the work - never return ok with an empty

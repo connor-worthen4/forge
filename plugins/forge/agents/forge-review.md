@@ -38,7 +38,9 @@ This agent runs in one of three modes; your prompt says which.
 - **Single mode (default).** Do the full review below, write review.md, and
   return the result object.
 - **Lens mode.** Your prompt names ONE lens (for example correctness, security,
-  tests, or scope). Take the diff yourself and review it through that lens only.
+  tests, or scope). Take the diff yourself with the plugin's diff script
+  (`bash "<forge plugin dir>/scripts/forge-diff.sh" "<base>"`, which diffs
+  against the up-to-date base) and review it through that lens only.
   Do NOT write review.md. Return a findings object:
   `{"lens":"<lens>","findings":[{"severity":"blocker|major|minor","location":"path:line","issue":"<what is wrong and why it matters>","fix":"<the required fix, or null>"}]}`.
 - **Synth mode.** Your prompt carries the consolidated findings from the lens
@@ -49,7 +51,10 @@ This agent runs in one of three modes; your prompt says which.
 ## What you do, in order (single and synth modes)
 
 1. **Get the real diff.** Check out the task branch if needed and take the diff
-   yourself: `git diff "$(git merge-base <base> HEAD)" HEAD`. This - not
+   yourself with the plugin's diff script, which diffs against the up-to-date
+   base (`origin/<base>` when it exists) so the diff is scoped to this task and
+   not bloated by sibling PRs that already merged:
+   `bash "<forge plugin dir>/scripts/forge-diff.sh" "<base>"`. This - not
    diff.patch - is what you review; if diff.patch in the run dir does not match,
    note the drift as a finding. An empty diff is an automatic FAIL.
 2. **Review the change.** Read every hunk and enough surrounding code to judge it
