@@ -45,6 +45,8 @@ Do exactly the following, then STOP:
    order matters). Mention any collisions or stacks in your report.
 
 6. **Report and STOP.** State the final state for the task: `pr_open` (give the PR
-   url), `done` (tier-0 report at `.forge/runs/<id>/report.md`), `plan_gate`
-   (review the plan and run `/forge:approve <id>`), or `blocked`/`failed` (give the
-   reason). Do not start another task.
+   url), `merged` (the code is on the configured integration branch; give the url
+   of the roll-up PR into the base), `done` (tier-0 report at
+   `.forge/runs/<id>/report.md`), `plan_gate` (review the plan and run
+   `/forge:approve <id>`), or `blocked`/`failed` (give the reason). Do not start
+   another task.

@@ -10,7 +10,9 @@
 #
 # Usage:
 #   record-outcome.sh <task-id> <final> [phase] [pr_url] [branch] [reason]
-#     final : done | pr_open | plan_gate | blocked | failed
+#     final : done | pr_open | merged | plan_gate | blocked | failed
+#             (merged = the task landed on the configured integration branch;
+#              the pr_url is then the shared roll-up PR into the base)
 #     phase : the phase the run ended on (defaults from final)
 #
 # Deps: jq, python3, forge-lib.sh.
@@ -28,7 +30,7 @@ branch="${5:-}"
 reason="${6:-}"
 
 case "$final" in
-  done|pr_open|plan_gate|blocked|failed) ;;
+  done|pr_open|merged|plan_gate|blocked|failed) ;;
   *) echo "record-outcome: invalid final state '$final'" >&2; exit 2 ;;
 esac
 
@@ -36,7 +38,7 @@ esac
 if [ -z "$phase" ]; then
   case "$final" in
     done) phase="report" ;;
-    pr_open) phase="integrate" ;;
+    pr_open|merged) phase="integrate" ;;
     plan_gate) phase="plan" ;;
     *) phase="build" ;;
   esac

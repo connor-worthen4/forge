@@ -169,7 +169,7 @@ cares about. Mapping:
 | `build`         | `building` |
 | `verify`        | `verifying` |
 | `review`        | `reviewing` |
-| `integrate`     | `integrating`, `pr_open` |
+| `integrate`     | `integrating`, `pr_open`, `merged` |
 | `report`        | `planning` (tier-0 report in progress) |
 | (terminal)      | `done`, `failed` - `current_phase` keeps its last value (`integrate` for tiers 1-2, `report` for tier 0) |
 | (pause)         | `blocked` |
@@ -177,9 +177,10 @@ cares about. Mapping:
 The state machine below is the conceptual pipeline. The forge-run workflow drives
 the phases in memory and shows each transition live in the workflow view; it
 persists only the **terminal or parked** state to `run.json` (via
-`scripts/record-outcome.sh`): `done`, `pr_open`, `plan_gate`, `blocked`, or
-`failed`. The intermediate `planning`/`building`/`verifying`/`reviewing`/
-`integrating` values remain part of the contract for tooling and crash inspection.
+`scripts/record-outcome.sh`): `done`, `pr_open`, `merged`, `plan_gate`,
+`blocked`, or `failed`. The intermediate `planning`/`building`/`verifying`/
+`reviewing`/`integrating` values remain part of the contract for tooling and
+crash inspection.
 
 ### Surfaces
 
@@ -286,7 +287,9 @@ stateDiagram-v2
     verifying --> building: checks fail (loop)
     reviewing --> integrating: review passes
     reviewing --> building: review fails (loop)
-    integrating --> pr_open: PR opened into base (forge never merges)
+    integrating --> pr_open: PR opened into base (no integration branch)
+    integrating --> merged: merged into the configured integration branch
+    merged --> done: a human merges the roll-up PR into the base
     pr_open --> done: a human merges the PR on the host
     done --> [*]
 
@@ -329,18 +332,28 @@ stateDiagram-v2
 | `verifying`   | `building`    | Checks fail; loop back to build                       | 1, 2    |
 | `reviewing`   | `integrating` | Review passes                                         | 1, 2    |
 | `reviewing`   | `building`    | Review fails; loop back to build                      | 1, 2    |
-| `integrating` | `pr_open`     | PR opened into the base branch (forge never merges)   | 1, 2    |
+| `integrating` | `pr_open`     | PR opened into the base branch (no integration branch configured) | 1, 2 |
+| `integrating` | `merged`      | Branch merged into the configured `integration_branch`; one roll-up PR targets the base | 1, 2 |
 | `pr_open`     | `done`        | A human merges the PR on the host (forge does not poll)| 1, 2    |
+| `merged`      | `done`        | A human merges the roll-up integration PR into the base | 1, 2  |
 | any phase     | `blocked`     | Needs a human decision, credential, or access         | 0, 1, 2 |
 | `blocked`     | active phase  | Human unblocked; resume the phase it paused in        | 0, 1, 2 |
 | any phase     | `failed`      | Unrecoverable error                                   | 0, 1, 2 |
 
 `done` and `failed` are terminal. `blocked` is a resumable pause, not terminal.
-`pr_open` is the parked end state for tiers 1-2: **forge never merges**. The
-integrate phase opens a PR into the base branch and stops there; a human reviews
-and merges it on the host. forge does not poll for the merge, so for code tasks
-`pr_open` is where a forge run ends; only tier-0 tasks reach `done` (their report
-is written).
+
+For code tasks the run parks at one of two end states, decided by whether the
+project configured an `integration_branch`:
+
+- **`pr_open` (default).** **Forge merges nothing.** Integrate opens a PR into
+  the base branch and stops; a human reviews and merges it on the host. Forge
+  does not poll for that merge, so this is where the run ends.
+- **`merged`.** The task's branch was merged into the configured integration
+  branch, and a single roll-up PR from that branch targets the base. Forge still
+  never merges into the base itself - a human reviews that one PR. See
+  [project-config.md](project-config.md#the-integration-branch).
+
+Only tier-0 tasks reach `done` directly (their report is written).
 
 ### Tier behavior summary
 
@@ -348,8 +361,8 @@ is written).
   integrate, no verify/review. The artifact is `report.md`, grounded in the
   `acceptance_criteria`.
 - **Tier 1 (default):** full path `pending -> planning -> building -> verifying
-  -> reviewing -> integrating -> pr_open`. Opens a PR into base and parks at
-  `pr_open`; a human reviews and merges it on the host.
+  -> reviewing -> integrating -> pr_open` (or `-> merged` with an integration
+  branch configured). A human reviews and merges on the host either way.
 - **Tier 2 (gated):** as tier 1, with `planning -> plan_gate -> building` so a
   human approves the plan before any code is written.
 

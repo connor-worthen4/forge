@@ -587,6 +587,10 @@ git -C "$FINT" config user.email tester@forge.test
 git -C "$FINT" config user.name "forge tester"
 git -C "$FINT" remote add origin "$FBARE"
 mkdir -p "$FINT/.forge" "$FINT/tasks"
+# Real repos gitignore .forge/ (forge's own repo and every target repo do). Left
+# tracked, forge's config would be reverted by any branch switch mid-run, and the
+# per-task worktrees would be committed as embedded gitlinks.
+printf '.forge/\n' > "$FINT/.gitignore"
 cat > "$FINT/.forge/config.yaml" <<'YAML'
 version: 1
 base_branch: develop
@@ -669,6 +673,70 @@ nout="$(PATH="$FBIN:$PATH" FORGE_TARGET_REPO="$FNOR" bash "$SCRIPTS_DIR/forge-in
 assert_eq "blocked" "$(printf '%s' "$nout" | jq -r .status)" "no remote -> status blocked"
 case "$(printf '%s' "$nout" | jq -r .reason)" in *remote*) got=yes ;; *) got=no ;; esac
 assert_eq "yes" "$got" "blocked reason names the missing remote"
+echo
+echo "integration mode merges into the integration branch and keeps ONE PR out:"
+# Same repo and shim, now with integration_branch configured.
+cat > "$FINT/.forge/config.yaml" <<'YAML'
+version: 1
+base_branch: develop
+protected_branches: [main]
+integration_branch: forge/integration
+vcs:
+  host: github
+  cli: gh
+YAML
+git -C "$FINT" checkout -q forge/fix/int
+IREC="$FBIN/gh_integration.txt"
+iout3="$(PATH="$FBIN:$PATH" GH_RECORD="$IREC" FORGE_TARGET_REPO="$FINT" bash "$SCRIPTS_DIR/forge-integrate.sh" \
+  --task-id fix-intg000001 --run-dir "$IRUN" --spec "$FINT/tasks/fix-intg000001.md" 2>/dev/null)"
+assert_eq "ok" "$(printf '%s' "$iout3" | jq -r .status)" "integration mode -> status ok"
+assert_eq "forge/integration" "$(printf '%s' "$iout3" | jq -r .merged_into)" "reports the branch it merged into"
+assert_eq "forge/integration" "$(jq -r .merged_into "$IRUN/pr.json")" "pr.json records the merge target"
+got="$(git -C "$FINT" log --oneline "forge/integration" 2>/dev/null | grep -c "merge fix-intg000001")"
+assert_eq "1" "$got" "the task branch is merged into the integration branch"
+assert_eq "1" "$(git -C "$FINT" ls-remote origin forge/integration | wc -l | tr -d ' ')" \
+  "the integration branch is pushed"
+case "$(cat "$IREC")" in *"forge: integration -> develop"*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "the PR opened is the roll-up integration -> base"
+# The integration merge happens in its own worktree, so the task tree is untouched.
+assert_eq "forge/fix/int" "$(git -C "$FINT" rev-parse --abbrev-ref HEAD)" \
+  "the merge runs in a separate worktree, not the task's checkout"
+
+# A second task reuses the one open PR instead of opening another.
+git -C "$FINT" checkout -q -b forge/fix/int2 develop
+printf 'second\n' > "$FINT/g.txt"
+git -C "$FINT" add -A && git -C "$FINT" commit -qm "second task"
+IREC2="$FBIN/gh_integration2.txt"
+IRUN2="$FINT/.forge/runs/fix-intg000002"
+iout4="$(PATH="$FBIN:$PATH" GH_RECORD="$IREC2" \
+  GH_EXISTING='[{"url":"https://github.com/x/y/pull/99","number":99}]' \
+  FORGE_TARGET_REPO="$FINT" bash "$SCRIPTS_DIR/forge-integrate.sh" \
+  --task-id fix-intg000002 --run-dir "$IRUN2" --branch forge/fix/int2 2>/dev/null)"
+assert_eq "ok" "$(printf '%s' "$iout4" | jq -r .status)" "a second task also integrates ok"
+assert_eq "https://github.com/x/y/pull/99" "$(printf '%s' "$iout4" | jq -r .pr_url)" \
+  "the second task reuses the single integration PR"
+assert_eq "no" "$([ -f "$IREC2" ] && echo yes || echo no)" "no second PR is created"
+got="$(git -C "$FINT" log --oneline forge/integration | grep -c "forge: merge")"
+assert_eq "2" "$got" "both tasks are stacked up on the integration branch"
+
+# A conflicting merge blocks instead of guessing, and leaves nothing half-merged.
+git -C "$FINT" checkout -q -b forge/fix/conflict develop
+printf 'conflicting\n' > "$FINT/f.txt"
+git -C "$FINT" add -A && git -C "$FINT" commit -qm "conflicting change"
+IRUN3="$FINT/.forge/runs/fix-intg000003"
+iout5="$(PATH="$FBIN:$PATH" FORGE_TARGET_REPO="$FINT" bash "$SCRIPTS_DIR/forge-integrate.sh" \
+  --task-id fix-intg000003 --run-dir "$IRUN3" --branch forge/fix/conflict 2>/dev/null)"
+assert_eq "blocked" "$(printf '%s' "$iout5" | jq -r .status)" "a conflicting merge is blocked, not guessed at"
+case "$(printf '%s' "$iout5" | jq -r .reason)" in *f.txt*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "the blocked reason names the conflicting file"
+IWT="$FINT/.forge/worktrees/__integration"
+assert_eq "" "$(git -C "$IWT" diff --name-only --diff-filter=U 2>/dev/null)" \
+  "the aborted merge leaves no conflicted state behind"
+assert_eq "1" "$(git -C "$FINT" ls-remote origin forge/fix/conflict | wc -l | tr -d ' ')" \
+  "the conflicting task's own branch is still pushed and safe"
+assert_eq "no" "$([ -d "$FINT/.forge/integration.lock" ] && echo yes || echo no)" \
+  "the integration lock is released even on a blocked merge"
+
 rm -rf "$FINT" "$FBARE" "$FBIN" "$FNOR"
 
 echo

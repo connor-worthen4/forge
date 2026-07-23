@@ -20,9 +20,19 @@ profile: standard
 review_threshold_lines: 400
 
 # Source of truth for the git guardrail's protected list. The guardrail hook
-# reads this first (relative to cwd), then FORGE_PROTECTED_BRANCHES, then its
-# built-in default of [main, master, develop].
+# reads this first, then FORGE_PROTECTED_BRANCHES, then its built-in default of
+# [main, master, develop]. Narrowing this list is a real loosening: a branch left
+# out becomes pushable by forge agents. GitHub branch protection is the backstop.
 protected_branches: [main, master, develop]
+
+# Opt-in. The ONE branch forge may merge into. With it set, integrate merges each
+# verified task branch here and keeps a single open PR from it into the base, so
+# overnight tasks compound on one branch and conflicts are resolved somewhere
+# disposable - leaving one PR to review in the morning. Those tasks finish at
+# `merged` rather than `pr_open`. It must not be main/master, must not equal
+# base_branch, and must not appear in protected_branches. Omit it (the default)
+# and forge never merges anything.
+# integration_branch: forge/integration
 
 vcs:
   host: github          # github | gitlab

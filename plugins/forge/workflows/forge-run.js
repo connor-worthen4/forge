@@ -24,8 +24,10 @@
 //                approved?, replanFeedback?, startPhase? } ]
 //   }
 // Returns: { results: [ { taskId, profile, surface, tier, final, prUrl, branch,
-//                         stackedOn, reason } ] }
-//   where final is one of: done | pr_open | plan_gate | blocked | failed.
+//                         stackedOn, mergedInto, reason } ] }
+//   where final is one of: done | pr_open | merged | plan_gate | blocked | failed.
+//   `merged` means the project configured an integration_branch and the task
+//   landed there; the reported prUrl is then the shared roll-up PR into the base.
 //
 // Surfaces decide the run's concurrency. Tasks declaring the same `surface`
 // touch the same area of the system, so they run serially and STACKED - each
@@ -60,6 +62,9 @@ const RESULT = {
     // that forge-checks.sh wrote. The fast profile's review-skip decision reads
     // it; a script measured it, so no model is estimating diff size.
     diff_lines: { type: ['integer', 'null'] },
+    // The integration branch integrate merged this task into, when the project
+    // configured one. Null in the default PR mode, where nothing is merged.
+    merged_into: { type: ['string', 'null'] },
   },
 }
 
@@ -344,9 +349,13 @@ async function runTask(task) {
 
   const g = await runPhase('integrate', task, tier, attempt)
   if (!ok(g)) return endNonOk(out, g, 'integrate')
-  out.final = 'pr_open'
   out.phase = 'integrate'
   out.prUrl = (g && g.pr_url) || null
+  // With an integration branch configured, the task's own work has landed there
+  // and the reported PR is the shared roll-up into the base, not this task's.
+  // Without one, nothing merged and the PR is this task's own.
+  out.mergedInto = (g && g.merged_into) || null
+  out.final = out.mergedInto ? 'merged' : 'pr_open'
   return out
 }
 

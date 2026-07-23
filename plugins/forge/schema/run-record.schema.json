@@ -29,6 +29,7 @@
         "reviewing",
         "integrating",
         "pr_open",
+        "merged",
         "done",
         "blocked",
         "failed"

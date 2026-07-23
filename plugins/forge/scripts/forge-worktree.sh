@@ -152,6 +152,27 @@ except Exception:
       remove_wt "$path"
     fi
 
+    # A worktree under .forge/ is a git repo nested inside the working tree. If
+    # the target repo does not already ignore .forge/, a build's `git add -A`
+    # would commit it as a gitlink and pollute the task's diff. Exclude it
+    # repo-locally via .git/info/exclude rather than editing the project's
+    # .gitignore, which is the human's file, not forge's.
+    if ! git -C "$FORGE_MAIN" check-ignore -q .forge 2>/dev/null; then
+      common_dir="$(git -C "$FORGE_MAIN" rev-parse --git-common-dir 2>/dev/null)"
+      case "$common_dir" in
+        "") common_dir="" ;;
+        /*) ;;
+        *) common_dir="$FORGE_MAIN/$common_dir" ;;
+      esac
+      if [ -n "$common_dir" ] && [ -d "$common_dir" ]; then
+        mkdir -p "$common_dir/info"
+        if ! grep -qxF '.forge/' "$common_dir/info/exclude" 2>/dev/null; then
+          printf '# added by forge: run state and per-task worktrees\n.forge/\n' \
+            >> "$common_dir/info/exclude"
+        fi
+      fi
+    fi
+
     mkdir -p "$WORKTREES_DIR"
 
     # Resolve the starting point: an explicit --base, else the configured base

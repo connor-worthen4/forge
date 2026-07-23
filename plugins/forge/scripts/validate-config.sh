@@ -156,6 +156,22 @@ if pb is not None:
             or not all(isinstance(x, str) and x.strip() for x in pb)):
         errors.append("protected_branches must be a non-empty list of strings")
 
+# integration_branch (the one branch forge may merge into)
+ib = cfg.get("integration_branch")
+if ib is not None:
+    if not isinstance(ib, str) or not ib.strip():
+        errors.append("integration_branch must be a non-empty string")
+    elif ib in ("main", "master"):
+        errors.append("integration_branch must not be %r; forge merges into it "
+                      "unreviewed, so it has to be a disposable branch" % ib)
+    elif isinstance(pb, list) and ib in pb:
+        errors.append("integration_branch %r is also in protected_branches; the "
+                      "guardrail would refuse every merge into it" % ib)
+    elif ib == cfg.get("base_branch"):
+        errors.append("integration_branch must not equal base_branch (%r); forge "
+                      "would merge straight into the branch a human is meant to "
+                      "review" % ib)
+
 # surfaces
 sf = cfg.get("surfaces")
 if sf is not None:

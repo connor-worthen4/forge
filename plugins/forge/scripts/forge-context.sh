@@ -164,7 +164,7 @@ if isinstance(review_lenses, list) and review_lenses:
 
 # Statuses that are terminal or parked: --all skips them (plan_gate needs
 # /forge:approve; the rest are finished or need a human).
-SKIP_FOR_ALL = {"plan_gate", "pr_open", "done", "blocked", "failed"}
+SKIP_FOR_ALL = {"plan_gate", "pr_open", "merged", "done", "blocked", "failed"}
 GATE_PASSED = {"building", "verifying", "reviewing", "integrating"}
 
 
