@@ -34,6 +34,8 @@ the launcher falls back to the engine defaults documented below.
 | -------------------- | --------------- | -------- | ---------------------------- | ------- |
 | `version`            | integer         | yes      | `1`                          | Config schema version. Currently always `1`. |
 | `base_branch`        | string          | yes      | `develop`                    | Default branch feature branches are cut from and PRs target. |
+| `profile`            | enum            | no       | `standard`                   | Default pipeline shape for tasks that do not set their own `profile`. See [Profiles](#profiles). |
+| `review_threshold_lines` | integer     | no       | `400`                        | Fast profile only: review is skipped when the diff changes fewer than this many lines. See [Profiles](#profiles). |
 | `protected_branches` | list of strings | no       | `[main, master, develop]`    | Single source of truth for the git guardrail's protected list (see [Guardrail integration](#guardrail-integration)). |
 | `vcs`                | object          | yes      | -                            | VCS host and CLI. See below. |
 | `commands`           | object          | yes      | -                            | How forge builds/checks this repo. See below. |
@@ -70,6 +72,35 @@ string means the phase skips that step.
 
 Task types are `fix`, `build`, `audit`, `refactor`, `investigate`, `chore` (same
 enum as the task-spec contract).
+
+### Profiles
+
+`profile` sets the default pipeline shape for this repo. A task spec's own
+`profile` field overrides it; with neither set, the default is `standard`.
+
+| Profile    | Phases                                            | Use for |
+| ---------- | ------------------------------------------------- | ------- |
+| `fast`     | plan, build, verify (script), integrate (script)   | Small, well-specified greenfield work. |
+| `standard` | intake, plan, build, verify, review, integrate     | The default. |
+| `audit`    | intake, plan, report                               | Read-only investigation. No branch, no PR. |
+
+Under `fast`, intake is skipped whenever the spec already states its
+`acceptance_criteria`, and review is skipped when the branch diff changes fewer
+than `review_threshold_lines` lines. That count comes from the `diff_lines`
+field `forge-checks.sh` records in `checks.json`, so the threshold is compared
+against a measured number; when the count is unavailable, review runs.
+
+Set `review_threshold_lines` to `0` to keep review on every fast-profile task
+regardless of diff size. Only fast-profile tasks consult it, but it is worth
+setting on a `standard`-default repo too: individual specs can still ask for
+`profile: fast`.
+
+Profiles trim ceremony, not approval: a task type in `autonomy.require_gate`
+still parks at `plan_gate` under `fast`. The `audit` profile forces tier 0 (no
+branch, no PR), whatever the task's `autonomy_tier` says.
+
+The full contract, including how profiles interact with autonomy tiers, is in
+[task-spec.md](task-spec.md#profiles).
 
 ### `review_lenses`
 
@@ -159,9 +190,10 @@ scripts/validate-config.sh .forge/config.yaml
 ```
 
 Errors fail the run (non-zero exit): missing required fields, wrong `version`,
-bad enum values (`vcs.host`, `vcs.cli`, `autonomy.default_tier`, task types in
-`require_gate`, model phase keys), a non-positive `budget.max_attempts`, and
-malformed `protected_branches` or `review_lenses`. Warnings are advisory and do
-not fail: an empty `commands.test`, a phase model set to `opus`, an unrecognized
-model string, and `vcs.cli` inconsistent with `host`. When the python
-`jsonschema` library is available, a full Draft 2020-12 validation runs as well.
+bad enum values (`profile`, `vcs.host`, `vcs.cli`, `autonomy.default_tier`, task
+types in `require_gate`, model phase keys), a non-positive `budget.max_attempts`,
+a negative `review_threshold_lines`, and malformed `protected_branches` or
+`review_lenses`. Warnings are advisory and do not fail: an empty `commands.test`,
+a phase model set to `opus`, an unrecognized model string, and `vcs.cli`
+inconsistent with `host`. When the python `jsonschema` library is available, a
+full Draft 2020-12 validation runs as well.

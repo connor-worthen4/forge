@@ -14,14 +14,15 @@
 // args shape (assembled by the launcher):
 //   {
 //     pluginRoot, repoRoot,
-//     config: { base_branch, vcs:{host,cli,pr_target}, commands:{...},
+//     config: { base_branch, profile, review_threshold_lines,
+//               vcs:{host,cli,pr_target}, commands:{...},
 //               autonomy:{default_tier, require_gate}, budget:{max_attempts, models:{...}},
 //               review_lenses?:[...] },
-//     tasks: [ { taskId, type, autonomy_tier|null, title, branch, specFile|null,
-//                goal|null, runDir, mode:"existing"|"greenfield",
-//                approved?, replanFeedback?, startPhase? } ]
+//     tasks: [ { taskId, type, autonomy_tier|null, profile|null, hasAcceptanceCriteria,
+//                title, branch, specFile|null, goal|null, runDir,
+//                mode:"existing"|"greenfield", approved?, replanFeedback?, startPhase? } ]
 //   }
-// Returns: { results: [ { taskId, tier, final, prUrl, branch, reason } ] }
+// Returns: { results: [ { taskId, profile, tier, final, prUrl, branch, reason } ] }
 //   where final is one of: done | pr_open | plan_gate | blocked | failed.
 
 export const meta = {
@@ -45,6 +46,10 @@ const RESULT = {
     artifacts: { type: 'array', items: { type: 'string' } },
     blocked_reason: { type: ['string', 'null'] },
     pr_url: { type: ['string', 'null'] },
+    // Changed lines in the branch diff, copied by verify out of the checks.json
+    // that forge-checks.sh wrote. The fast profile's review-skip decision reads
+    // it; a script measured it, so no model is estimating diff size.
+    diff_lines: { type: ['integer', 'null'] },
   },
 }
 
@@ -91,6 +96,16 @@ const commands = cfg.commands || {}
 const vcs = cfg.vcs || {}
 const reviewLenses = Array.isArray(cfg.review_lenses) && cfg.review_lenses.length ? cfg.review_lenses : null
 
+// Profiles are the pipeline SHAPE, orthogonal to the autonomy tier (which is
+// about human approval). standard is the full pipeline; fast trims the ceremony
+// a small, well-specified task does not need; audit is the read-only path.
+const PROFILES = ['fast', 'standard', 'audit']
+const defaultProfile = PROFILES.includes(cfg.profile) ? cfg.profile : 'standard'
+const reviewThresholdLines =
+  Number.isInteger(cfg.review_threshold_lines) && cfg.review_threshold_lines >= 0
+    ? cfg.review_threshold_lines
+    : 400
+
 // Phase agents are registered by this plugin, so their agent-type names are
 // namespaced by the plugin name: agents/forge-intake.md -> "forge:forge-intake".
 // Keep this prefix in sync with the plugin name in .claude-plugin/plugin.json.
@@ -100,10 +115,22 @@ const ok = (r) => r && r.status === 'ok'
 const isBlocked = (r) => r && r.status === 'blocked'
 const q = (v) => (v ? JSON.stringify(v) : '(unset)')
 
-// audit/investigate are always read-only tier 0; require_gate forces tier 2;
-// otherwise the spec's own tier, then the config default. Mirrors the rule the
-// intake agent records in the brief.
-function effectiveTier(task) {
+// The spec's own profile wins over the repo default; an unrecognized value falls
+// back to standard rather than failing the run (validate-task.sh rejects it at
+// the door). The launcher resolves this too - re-resolving here keeps the
+// workflow correct when args arrive from an older launcher.
+function effectiveProfile(task) {
+  if (PROFILES.includes(task.profile)) return task.profile
+  return defaultProfile
+}
+
+// The audit profile and the audit/investigate task types are both read-only
+// tier 0; require_gate still forces tier 2 even under fast, because that gate is
+// an explicit human-approval policy and profiles only trim ceremony, never
+// approval. Otherwise the spec's own tier, then the config default. Mirrors the
+// rule the intake agent records in the brief.
+function effectiveTier(task, profile) {
+  if (profile === 'audit') return 0
   if (task.type === 'audit' || task.type === 'investigate') return 0
   if (requireGate.includes(task.type)) return 2
   return task.autonomy_tier != null ? task.autonomy_tier : defaultTier
@@ -116,7 +143,7 @@ function contextBlock(task, tier, attempt) {
   const cli = vcs.cli || (vcs.host === 'gitlab' ? 'glab' : 'gh')
   const lines = [
     `Task id: ${task.taskId}`,
-    `Type: ${task.type}   Effective tier: ${tier}   Mode: ${task.mode}   Attempt: ${attempt}`,
+    `Type: ${task.type}   Effective tier: ${tier}   Profile: ${effectiveProfile(task)}   Mode: ${task.mode}   Attempt: ${attempt}`,
     `Working directory (the target repo, your cwd): ${args.repoRoot}`,
     `Run dir (write your artifact here): ${task.runDir}`,
     `Forge plugin dir (its scripts/ live here): ${args.pluginRoot}`,
@@ -131,16 +158,27 @@ function contextBlock(task, tier, attempt) {
   return lines.join('\n')
 }
 
-function runPhase(phase, task, tier, attempt) {
+function runPhase(phase, task, tier, attempt, note) {
   const opts = { label: `${phase}:${task.taskId}`, phase, agentType: `${AGENT_NS}forge-${phase}`, schema: RESULT }
   if (models[phase]) opts.model = models[phase]
   return agent(
     `You are the forge ${phase} phase. Your role, discipline, and output contract are in your ` +
       `agent instructions; follow them exactly. This task's context:\n\n${contextBlock(task, tier, attempt)}\n\n` +
+      (note ? `${note}\n\n` : '') +
       `Do your phase's work now, write your artifact into the run dir, and return the result object.`,
     opts,
   )
 }
+
+// Under the fast profile verify is the script's verdict, not a model's:
+// forge-checks.sh runs the configured commands and its `overall` maps straight
+// through. The per-criterion grading pass is exactly the ceremony this profile
+// trades away, on the premise that fast work is small and well specified.
+const SCRIPT_VERIFY_NOTE =
+  'Run in SCRIPT mode (fast profile). forge-checks.sh IS the verdict: run it once, write a ' +
+  'compact verify.md summarizing the checks.json it produced, and map its `overall` field ' +
+  'straight through (pass -> ok, fail or empty-diff -> fail, blocked -> blocked). Do NOT grade ' +
+  'the acceptance criteria one by one. Still report checks.json\'s `diff_lines` in your result.'
 
 // Review either as a single skeptical agent (default) or, when config sets
 // review_lenses, as parallel lens reviewers whose findings a synth agent
@@ -185,11 +223,22 @@ function park(out, r, phase, reason) {
 }
 
 async function runTask(task) {
-  const tier = effectiveTier(task)
-  const out = { taskId: task.taskId, tier, final: null, phase: 'intake', prUrl: null, branch: tier === 0 ? null : task.branch, reason: null }
-  const startPhase = task.startPhase || (task.approved ? 'build' : 'intake')
+  const profile = effectiveProfile(task)
+  const tier = effectiveTier(task, profile)
+  const out = { taskId: task.taskId, profile, tier, final: null, phase: 'intake', prUrl: null, branch: tier === 0 ? null : task.branch, reason: null }
 
-  // Tier 0: read-only investigation -> report -> done.
+  // The fast profile skips intake when the spec already states its acceptance
+  // criteria: pinning down exactly that is intake's job, so there is nothing
+  // left for it to establish. A greenfield goal prompt carries no criteria and
+  // still runs intake.
+  let startPhase = task.startPhase || (task.approved ? 'build' : 'intake')
+  if (startPhase === 'intake' && profile === 'fast' && task.hasAcceptanceCriteria) {
+    log(`forge: ${task.taskId} fast profile - skipping intake (spec already states acceptance criteria)`)
+    startPhase = 'plan'
+  }
+
+  // Tier 0 (the audit profile and the audit/investigate types): read-only
+  // investigation -> report -> done.
   if (tier === 0) {
     const i = await runPhase('intake', task, tier, 1)
     if (!ok(i)) return endNonOk(out, i, 'intake')
@@ -223,11 +272,21 @@ async function runTask(task) {
     const b = await runPhase('build', task, tier, attempt)
     if (!ok(b)) return endNonOk(out, b, 'build')
 
-    const v = await runPhase('verify', task, tier, attempt)
+    const v = await runPhase('verify', task, tier, attempt, profile === 'fast' ? SCRIPT_VERIFY_NOTE : null)
     if (isBlocked(v)) return park(out, v, 'verify')
     if (!ok(v)) {
       if (++attempt > maxAttempts) return park(out, v, 'verify', `verify failed; max_attempts (${maxAttempts}) reached`)
       continue
+    }
+
+    // The fast profile skips review under the configured line threshold: a small
+    // diff has too little surface for an adversarial pass to earn its cost. The
+    // count is the one forge-checks.sh measured, not a model's estimate, and a
+    // missing count falls through to a full review rather than silently skipping.
+    const diffLines = v && typeof v.diff_lines === 'number' ? v.diff_lines : null
+    if (profile === 'fast' && diffLines !== null && diffLines < reviewThresholdLines) {
+      log(`forge: ${task.taskId} fast profile - skipping review (${diffLines} changed lines < review_threshold_lines ${reviewThresholdLines})`)
+      break
     }
 
     const r = await runReview(task, tier, attempt)
@@ -255,13 +314,14 @@ if (!tasks.length) {
 
 const results = []
 for (const task of tasks) {
-  log(`forge: ${task.taskId} (${task.type}, ${task.mode}) starting`)
+  log(`forge: ${task.taskId} (${task.type}, ${effectiveProfile(task)} profile, ${task.mode}) starting`)
   let outcome
   try {
     outcome = await runTask(task)
   } catch (e) {
     outcome = {
       taskId: task.taskId,
+      profile: effectiveProfile(task),
       final: 'failed',
       phase: 'intake',
       prUrl: null,

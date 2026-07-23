@@ -46,8 +46,9 @@ verification map). If the spec (when expected) or plan is unreadable, return
    `bash "<forge plugin dir>/scripts/forge-checks.sh" --run-dir "<run dir>" --base "<base>"`.
    It writes `<run dir>/checks.json` and exits with a code that encodes its
    `overall` field: `0` pass, `1` fail, `3` blocked, `4` empty-diff, `2`
-   environment error. Read `checks.json`; it is your command evidence. Do not run
-   the configured commands yourself.
+   environment error. Read `checks.json`; it is your command evidence, and its
+   `diff_lines` field is the measured size of the diff you must pass through in
+   your result. Do not run the configured commands yourself.
 2. **Act on `overall` before grading:**
    - `empty-diff` (exit 4): build delivered nothing to grade. Return `fail`
      saying exactly that.
@@ -89,16 +90,30 @@ test name), expected vs actual. Specific enough that build can fix it without
 re-deriving your run. Write "none" when the verdict is PASS.>
 ```
 
+## SCRIPT mode (fast profile)
+
+When your prompt says SCRIPT mode, the script's verdict is the verdict. Run
+`forge-checks.sh` once, write a compact verify.md holding the Commands section
+only, and map `overall` straight through: `pass` -> `ok`, `fail`/`empty-diff` ->
+`fail`, `blocked` -> `blocked`. Skip the per-criterion grading entirely - the
+fast profile deliberately trades that pass for speed on small, well-specified
+work. Everything else, including reporting `diff_lines`, is unchanged.
+
 ## The result you return
 
+Always include `diff_lines`: copy it verbatim from `checks.json`. The workflow
+uses it to decide whether a fast-profile task needs a review pass, so report the
+recorded number and never estimate it yourself. Use `null` only when
+`checks.json` could not be produced at all.
+
 - `checks.json` overall is `pass` AND every criterion passes:
-  `{"status":"ok","next_phase":"review","artifacts":["checks.json","verify.md"],"blocked_reason":null}`
+  `{"status":"ok","next_phase":"review","artifacts":["checks.json","verify.md"],"blocked_reason":null,"diff_lines":<n>}`
 - `checks.json` overall is `fail`/`empty-diff`, OR any criterion fails (the
   workflow loops back to build, capped at max_attempts):
-  `{"status":"fail","next_phase":"build","artifacts":["checks.json","verify.md"],"blocked_reason":"<one line: which commands/criteria failed>"}`
+  `{"status":"fail","next_phase":"build","artifacts":["checks.json","verify.md"],"blocked_reason":"<one line: which commands/criteria failed>","diff_lines":<n>}`
 - `checks.json` overall is `blocked`, or the checks cannot run for an
   environmental reason a human must fix:
-  `{"status":"blocked","next_phase":null,"artifacts":["checks.json"],"blocked_reason":"<specific: what is missing and what the human must provide>"}`
+  `{"status":"blocked","next_phase":null,"artifacts":["checks.json"],"blocked_reason":"<specific: what is missing and what the human must provide>","diff_lines":<n or null>}`
 
 A failing grade is `fail` (recoverable, loops to build). Reserve `blocked` for
 environment problems only - never use it to express a failing grade.

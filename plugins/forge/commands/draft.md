@@ -94,12 +94,16 @@ the spec's `scope` as the literal `unknown - investigate` rather than guessing.
 6. **Write each spec** to `tasks/<id>.md` with YAML frontmatter then a prose body.
    Frontmatter, in this order, omitting any optional field you have nothing for:
    ```
-   id, title, type, autonomy_tier, priority, scope, constraints, depends_on,
-   source: { kind: cli, ref: "forge:draft" }, acceptance_criteria
+   id, title, type, autonomy_tier, profile, priority, scope, constraints,
+   depends_on, source: { kind: cli, ref: "forge:draft" }, acceptance_criteria
    ```
    The body is the grounded prose ask: what is wanted and why, two to four
    sentences, no emojis. Do not set `base_branch` unless the task must target a
-   non-default branch (it defaults to the project base).
+   non-default branch (it defaults to the project base). Omit `profile` too
+   unless this specific task needs a shape the repo's default does not give it -
+   `profile: standard` to force the full pipeline on a task the repo would
+   otherwise run fast, or `profile: fast` for small, tightly specified work in a
+   repo that defaults to standard.
 
 7. **Validate every spec.** Run
    `"${CLAUDE_PLUGIN_ROOT}/scripts/validate-task.sh" tasks/<id>.md` for each. If

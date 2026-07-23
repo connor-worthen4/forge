@@ -5,9 +5,11 @@
 # The forge-run.js workflow runs in a sandbox with no filesystem access, so the
 # launcher commands (/forge:run, /forge:run-all, /forge:approve) call this script to do
 # all the deterministic, disk-touching work up front: resolve the project config,
-# pick the task(s), detect greenfield-vs-existing mode, compute branch names, and
-# read each task's run record for approval/re-plan state. It prints a single JSON
-# object on stdout, ready to pass straight into Workflow({scriptPath, args}).
+# pick the task(s), detect greenfield-vs-existing mode, resolve each task's
+# profile (spec over repo default) and whether its spec already states acceptance
+# criteria, compute branch names, and read each task's run record for
+# approval/re-plan state. It prints a single JSON object on stdout, ready to pass
+# straight into Workflow({scriptPath, args}).
 #
 # Usage:
 #   forge-context.sh <task-id> [--approved]      single task by id
@@ -128,9 +130,13 @@ commands = raw.get("commands") or {}
 autonomy = raw.get("autonomy") or {}
 budget = raw.get("budget") or {}
 
+PROFILES = ("fast", "standard", "audit")
+
 # Resolve only the fields the workflow needs, applying engine defaults.
 config = {
     "base_branch": raw.get("base_branch", "develop"),
+    "profile": raw.get("profile") if raw.get("profile") in PROFILES else "standard",
+    "review_threshold_lines": raw.get("review_threshold_lines", 400),
     "vcs": {
         "host": host,
         "cli": vcs.get("cli", "glab" if host == "gitlab" else "gh"),
@@ -275,7 +281,8 @@ def dep_satisfied(dep_id):
     return _pr_merged(dep_id)
 
 
-def make_task(task_id, ttype, autonomy_tier, title, spec_file, goal_text):
+def make_task(task_id, ttype, autonomy_tier, title, spec_file, goal_text,
+              profile=None, criteria=None):
     status = read_run_status(task_id)
     feedback = feedback_for(task_id)
     if approved_flag or status in GATE_PASSED:
@@ -284,13 +291,23 @@ def make_task(task_id, ttype, autonomy_tier, title, spec_file, goal_text):
         approved, start, replan = False, "plan", feedback
     else:
         approved, start, replan = False, "intake", None
+    # The spec's own profile wins over the repo default; an unknown value falls
+    # back rather than failing the run (validate-task.sh is where it is rejected).
+    task_profile = profile if profile in PROFILES else config["profile"]
+    # The audit profile is read-only, so it never gets a working branch - same
+    # rule the audit/investigate task types already carry.
     branch = None
-    if ttype not in ("audit", "investigate"):
+    if task_profile != "audit" and ttype not in ("audit", "investigate"):
         branch = branch_name(ttype, task_id)
     return {
         "taskId": task_id,
         "type": ttype,
         "autonomy_tier": autonomy_tier,
+        "profile": task_profile,
+        # Whether the spec already states its acceptance criteria. The workflow
+        # runs in a sandbox and cannot read the spec, so this disk fact is
+        # resolved here; the fast profile uses it to skip intake.
+        "hasAcceptanceCriteria": bool(criteria),
         "title": title or task_id,
         "branch": branch,
         "specFile": spec_file,
@@ -323,7 +340,8 @@ else:
                 continue
         tasks.append(make_task(tid, s.get("type", "fix"),
                                s.get("autonomy_tier"), s.get("title"),
-                               s.get("_file"), None))
+                               s.get("_file"), None,
+                               s.get("profile"), s.get("acceptance_criteria")))
 
 out = {
     "pluginRoot": plugin_dir,

@@ -13,8 +13,9 @@
 # It is idempotent: a crashed earlier run that already opened the PR is detected
 # and reused rather than duplicated. The PR body is templated here (no model): a
 # conventional-prefixed title from the spec type+title, the spec body verbatim,
-# the acceptance criteria as a checklist, a line noting verify and review passed,
-# and the standard "Opened by forge" footer.
+# the acceptance criteria as a checklist, a line naming the gates that actually
+# ran (review is absent when the fast profile skipped it), and the standard
+# "Opened by forge" footer.
 #
 # Usage:
 #   forge-integrate.sh --task-id <id> [--run-dir <dir>] [--base <pr-target>]
@@ -199,7 +200,13 @@ PY
     spec_field "$spec" acceptance_criteria "[]" | jq -r '.[]? | "- [ ] " + .' 2>/dev/null
   fi
   echo
-  echo "verify and review passed (artifacts under .forge/runs/$task_id/)."
+  # Report only the gates that actually ran: the fast profile skips review for a
+  # small diff, and a PR must never claim a pass that nothing produced.
+  if [ -f "$run_dir/review.md" ]; then
+    echo "verify and review passed (artifacts under .forge/runs/$task_id/)."
+  else
+    echo "verify passed; review was not run for this task (artifacts under .forge/runs/$task_id/)."
+  fi
   echo
   echo "Opened by forge. Forge never merges; a human reviews and merges this PR."
 } > "$body_file"

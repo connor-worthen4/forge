@@ -6,10 +6,11 @@
 # Checks (errors fail the run, non-zero exit):
 #   - required fields present (version, base_branch, vcs.host, commands.test)
 #   - version == 1
-#   - enum values: vcs.host, vcs.cli, autonomy.default_tier, task types in
-#     autonomy.require_gate, budget.models phase keys
+#   - enum values: profile, vcs.host, vcs.cli, autonomy.default_tier, task types
+#     in autonomy.require_gate, budget.models phase keys
 #   - protected_branches, review_lenses well-formed when present
 #   - budget.max_attempts a positive integer when present
+#   - review_threshold_lines a non-negative integer when present
 # Warnings (do NOT fail):
 #   - commands.test empty (verify needs it for any code-changing task)
 #   - a phase model set to opus (reserved for explicit tier-2 overrides)
@@ -107,6 +108,18 @@ elif cfg["version"] != 1:
 # base_branch
 if not cfg.get("base_branch"):
     errors.append("missing required field: base_branch")
+
+# profile (default pipeline shape for tasks that do not set their own)
+if "profile" in cfg:
+    profiles = props.get("profile", {}).get("enum", ["fast", "standard", "audit"])
+    if cfg["profile"] not in profiles:
+        errors.append("profile must be one of %s (got %r)" % (profiles, cfg["profile"]))
+
+# review_threshold_lines (consulted by fast-profile tasks, whatever the repo default)
+if "review_threshold_lines" in cfg:
+    rtl = cfg["review_threshold_lines"]
+    if not isinstance(rtl, int) or isinstance(rtl, bool) or rtl < 0:
+        errors.append("review_threshold_lines must be an integer >= 0 (got %r)" % rtl)
 
 # vcs
 vcs = cfg.get("vcs")

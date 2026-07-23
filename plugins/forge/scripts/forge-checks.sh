@@ -14,7 +14,9 @@
 # that exits 127 is treated as could-not-run (a missing tool - an environment
 # problem for a human, not a failing grade). It also folds in the two mechanical
 # preconditions verify checks today: a non-empty diff against the base (via
-# forge-diff.sh) and that there is a branch with changes to grade.
+# forge-diff.sh) and that there is a branch with changes to grade. The diff's
+# changed-line count is recorded as `diff_lines` - the fast profile compares it
+# against review_threshold_lines to decide whether review is worth running.
 #
 # Usage:
 #   forge-checks.sh [--run-dir <dir>] [--base <branch>]
@@ -63,6 +65,11 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 2
 fi
 
+# Changed lines in the diff, set below. Recorded in checks.json so the fast
+# profile's review-skip threshold is compared against a measured number rather
+# than a model's estimate of how big the change was.
+diff_lines=0
+
 # emit <overall> <diff_empty-literal> [command-object-json...]
 # Assembles checks.json from the per-command jq objects, writes it (or prints it),
 # and reports a one-line summary.
@@ -72,10 +79,12 @@ emit() {
   if [ "$#" -gt 0 ]; then
     json="$(printf '%s\n' "$@" | jq -s \
       --arg base "$base" --arg overall "$overall" --argjson diff_empty "$diff_empty" \
-      '{base:$base, diff_empty:$diff_empty, overall:$overall, commands:.}')"
+      --argjson diff_lines "$diff_lines" \
+      '{base:$base, diff_empty:$diff_empty, diff_lines:$diff_lines, overall:$overall, commands:.}')"
   else
     json="$(jq -n --arg base "$base" --arg overall "$overall" --argjson diff_empty "$diff_empty" \
-      '{base:$base, diff_empty:$diff_empty, overall:$overall, commands:[]}')"
+      --argjson diff_lines "$diff_lines" \
+      '{base:$base, diff_empty:$diff_empty, diff_lines:$diff_lines, overall:$overall, commands:[]}')"
   fi
   if [ -n "$run_dir" ]; then
     mkdir -p "$run_dir"
@@ -100,6 +109,16 @@ if [ -z "$diff_out" ]; then
   emit "empty-diff" true
   exit 4
 fi
+
+# Count added/removed lines inside hunks only. Tracking the hunk boundary is what
+# keeps the `---`/`+++` file headers out of the count: they can only appear
+# between a `diff --git` line and the first `@@`.
+diff_lines="$(printf '%s\n' "$diff_out" | awk '
+  /^diff --git / { inhunk = 0; next }
+  /^@@/          { inhunk = 1; next }
+  inhunk && /^[+-]/ { n++ }
+  END { print n + 0 }
+')"
 
 objs=()
 any_fail=false

@@ -61,6 +61,7 @@ The frontmatter validates against [`schema/task-spec.schema.json`](../schema/tas
 
 | Field          | Type                       | Description |
 | -------------- | -------------------------- | ----------- |
+| `profile`      | enum                       | Pipeline shape: `fast`, `standard`, or `audit` (see [Profiles](#profiles)). Omit to inherit the repo's `profile` from `.forge/config.yaml`, which itself defaults to `standard`. |
 | `scope`        | string or list of strings  | Files, dirs, or modules likely in play, or the literal `unknown - investigate`. |
 | `constraints`  | list of strings            | Invariants to preserve or things not to touch (e.g. "minimal diff", "do not change the public API"). |
 | `context_refs` | list of strings            | **Pointers** to read: paths, URLs, related PRs. Never inline the content itself, only references to it. |
@@ -71,6 +72,48 @@ The frontmatter validates against [`schema/task-spec.schema.json`](../schema/tas
 
 The body (everything after the closing `---`) is the free-form prose
 description of the ask. It is not schema-validated.
+
+### Profiles
+
+A **profile** is the pipeline *shape* a task runs through. It is orthogonal to
+`autonomy_tier`, which is about *human approval*: the profile decides which
+phases run, the tier decides whether a human approves the plan first.
+
+| Profile    | Phases                                                       | Use for |
+| ---------- | ------------------------------------------------------------ | ------- |
+| `fast`     | plan, build, verify (script), integrate (script)              | Small, well-specified greenfield work. |
+| `standard` | intake, plan, build, verify, review, integrate                | The default. Anything you have not deliberately decided is small. |
+| `audit`    | intake, plan, report                                          | Read-only investigation. No branch, no build, no PR. |
+
+**`fast`** trims two things:
+
+- **Intake is skipped when the spec already states `acceptance_criteria`.**
+  Pinning those down is intake's job, so with them present there is nothing left
+  for it to establish. A greenfield goal prompt (`/forge:run "<goal>"`) carries
+  no criteria and still runs intake.
+- **Review is skipped when the diff is under `review_threshold_lines`** (default
+  `400`, configured per repo). Below that there is too little surface for an
+  adversarial pass to earn its cost. The line count is the one `forge-checks.sh`
+  measured and recorded in `checks.json`, never a model's estimate; if the count
+  is unavailable, review runs.
+
+Verify and integrate are script-backed in every profile, but under `fast` verify
+runs in SCRIPT mode: `forge-checks.sh`'s `overall` is the verdict, with no
+per-criterion grading pass. That is the trade the profile is making, so use it
+only where the criteria are mechanical enough for the configured checks to cover
+them.
+
+**`audit`** is the read-only path and forces tier 0, whatever `autonomy_tier`
+says - it can produce no branch and no PR, so no approval gate applies. The
+`audit` and `investigate` task *types* already take this path regardless of
+profile.
+
+**`fast` does not weaken the plan gate.** A task type listed in the config's
+`autonomy.require_gate` still parks at `plan_gate` for approval: profiles trim
+ceremony, never human approval.
+
+Precedence: the spec's `profile`, else the repo config's `profile`, else
+`standard`.
 
 ---
 
@@ -151,6 +194,7 @@ stateDiagram-v2
     plan_gate --> planning: changes requested
     building --> verifying: build complete
     verifying --> reviewing: checks pass
+    verifying --> integrating: checks pass, fast profile skipped review
     verifying --> building: checks fail (loop)
     reviewing --> integrating: review passes
     reviewing --> building: review fails (loop)
@@ -193,6 +237,7 @@ stateDiagram-v2
 | `plan_gate`   | `planning`    | Human requested changes; re-plan                      | 2       |
 | `building`    | `verifying`   | Build complete (branch + commits exist)              | 1, 2    |
 | `verifying`   | `reviewing`   | Acceptance criteria checks pass                       | 1, 2    |
+| `verifying`   | `integrating` | Checks pass and the `fast` profile skipped review (diff under `review_threshold_lines`) | 1, 2 |
 | `verifying`   | `building`    | Checks fail; loop back to build                       | 1, 2    |
 | `reviewing`   | `integrating` | Review passes                                         | 1, 2    |
 | `reviewing`   | `building`    | Review fails; loop back to build                      | 1, 2    |
@@ -219,6 +264,9 @@ is written).
   `pr_open`; a human reviews and merges it on the host.
 - **Tier 2 (gated):** as tier 1, with `planning -> plan_gate -> building` so a
   human approves the plan before any code is written.
+
+The tier decides which of these paths a task takes; the [profile](#profiles)
+decides which phases run along it.
 
 ---
 

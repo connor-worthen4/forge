@@ -7,6 +7,18 @@ version: 1
 # Default branch feature branches are cut from and PRs target.
 base_branch: develop
 
+# Default pipeline shape for tasks that do not set their own `profile`.
+#   fast     - plan, build, verify, integrate. Skips intake when the spec already
+#              states acceptance criteria, and review when the diff is small.
+#   standard - the full intake, plan, build, verify, review, integrate pipeline.
+#   audit    - read-only intake, plan, report. No branch, no PR.
+profile: standard
+
+# Fast profile only: skip review when the branch diff changes fewer than this
+# many lines. Compared against the diff_lines forge-checks.sh measures. Use 0 to
+# review every fast-profile task regardless of size.
+review_threshold_lines: 400
+
 # Source of truth for the git guardrail's protected list. The guardrail hook
 # reads this first (relative to cwd), then FORGE_PROTECTED_BRANCHES, then its
 # built-in default of [main, master, develop].

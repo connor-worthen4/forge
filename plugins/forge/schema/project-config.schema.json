@@ -25,6 +25,18 @@
       "default": ["main", "master", "develop"],
       "description": "Single source of truth for the git guardrail's protected list. The hook reads this (relative to cwd) before falling back to FORGE_PROTECTED_BRANCHES or its built-in default."
     },
+    "profile": {
+      "type": "string",
+      "enum": ["fast", "standard", "audit"],
+      "default": "standard",
+      "description": "Default pipeline shape for tasks in this repo that do not set their own `profile`. 'fast' trims intake and small-diff review; 'standard' is the full pipeline; 'audit' is the read-only investigation path."
+    },
+    "review_threshold_lines": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 400,
+      "description": "Fast profile only: review is skipped when the branch diff changes fewer than this many lines. A diff at or above the threshold still gets the full review phase. Ignored by the standard and audit profiles."
+    },
     "vcs": {
       "type": "object",
       "additionalProperties": false,

@@ -247,6 +247,118 @@ assert_eq "empty-diff" "$(python3 -c 'import json,sys; print(json.load(open(sys.
 rm -rf "$FCHK"
 
 echo
+echo "task profiles resolve from the spec, then the repo config, then standard:"
+PTMP="$(mktemp -d)"
+mkdir -p "$PTMP/tasks" "$PTMP/.forge"
+# profile_of <task-id>: the resolved profile forge-context assembled for the task.
+profile_of() {
+  FORGE_TARGET_REPO="$PTMP" bash "$SCRIPTS_DIR/forge-context.sh" "$1" 2>/dev/null \
+    | python3 -c 'import sys, json; print(json.load(sys.stdin)["tasks"][0]["profile"])'
+}
+# task_field <task-id> <key>: any other resolved field, JSON-encoded.
+task_field() {
+  FORGE_TARGET_REPO="$PTMP" bash "$SCRIPTS_DIR/forge-context.sh" "$1" 2>/dev/null \
+    | python3 -c 'import sys, json; print(json.dumps(json.load(sys.stdin)["tasks"][0][sys.argv[1]]))' "$2"
+}
+write_spec() {  # write_spec <id> <profile-line>
+  cat > "$PTMP/tasks/$1.md" <<SPEC
+---
+id: $1
+title: Profile fixture
+type: fix
+autonomy_tier: 1
+$2
+acceptance_criteria:
+  - does a thing
+---
+Body.
+SPEC
+}
+write_spec fix-prof000001 ""
+write_spec fix-prof000002 "profile: fast"
+write_spec fix-prof000003 "profile: audit"
+
+assert_eq "standard" "$(profile_of fix-prof000001)" "no spec profile, no config -> standard"
+assert_eq "fast" "$(profile_of fix-prof000002)" "spec profile wins when set"
+
+printf 'version: 1\nprofile: fast\n' > "$PTMP/.forge/config.yaml"
+assert_eq "fast" "$(profile_of fix-prof000001)" "config profile applies when the spec omits one"
+assert_eq "audit" "$(profile_of fix-prof000003)" "spec profile overrides the config profile"
+assert_eq "null" "$(task_field fix-prof000003 branch)" "audit profile gets no working branch"
+assert_eq '"forge/fix/prof000002"' "$(task_field fix-prof000002 branch)" "fast profile still gets a branch"
+assert_eq "true" "$(task_field fix-prof000002 hasAcceptanceCriteria)" "spec criteria are surfaced to the workflow"
+
+got="$(FORGE_TARGET_REPO="$PTMP" bash "$SCRIPTS_DIR/forge-context.sh" --goal "build a thing" 2>/dev/null \
+  | python3 -c 'import sys, json; d=json.load(sys.stdin); print(d["tasks"][0]["hasAcceptanceCriteria"])')"
+assert_eq "False" "$got" "a goal prompt has no criteria, so fast still runs intake"
+
+printf 'version: 1\nprofile: fast\nreview_threshold_lines: 250\n' > "$PTMP/.forge/config.yaml"
+got="$(FORGE_TARGET_REPO="$PTMP" bash "$SCRIPTS_DIR/forge-context.sh" fix-prof000001 2>/dev/null \
+  | python3 -c 'import sys, json; print(json.load(sys.stdin)["config"]["review_threshold_lines"])')"
+assert_eq "250" "$got" "review_threshold_lines is passed through to the workflow"
+printf 'version: 1\n' > "$PTMP/.forge/config.yaml"
+got="$(FORGE_TARGET_REPO="$PTMP" bash "$SCRIPTS_DIR/forge-context.sh" fix-prof000001 2>/dev/null \
+  | python3 -c 'import sys, json; print(json.load(sys.stdin)["config"]["review_threshold_lines"])')"
+assert_eq "400" "$got" "review_threshold_lines defaults to 400"
+
+echo
+echo "the validators accept valid profiles and reject invalid ones:"
+write_spec fix-prof000004 "profile: turbo"
+FORGE_TARGET_REPO="$PTMP" bash "$SCRIPTS_DIR/validate-task.sh" "$PTMP/tasks/fix-prof000002.md" >/dev/null 2>&1
+assert_eq "0" "$?" "validate-task accepts profile: fast"
+vt_out="$(FORGE_TARGET_REPO="$PTMP" bash "$SCRIPTS_DIR/validate-task.sh" "$PTMP/tasks/fix-prof000004.md" 2>&1)"
+assert_eq "1" "$?" "validate-task rejects an unknown profile"
+case "$vt_out" in *profile*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "the rejection names the profile field"
+
+vc() {  # vc <config-body>: run validate-config against a fixture, print PASS/FAIL line
+  printf '%s\n' "$1" > "$PTMP/.forge/config.yaml"
+  bash "$SCRIPTS_DIR/validate-config.sh" "$PTMP/.forge/config.yaml" 2>&1
+}
+VALID_BASE='version: 1
+base_branch: develop
+vcs:
+  host: github
+commands:
+  test: "npm test"'
+case "$(vc "$VALID_BASE
+profile: fast
+review_threshold_lines: 400")" in PASS*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "validate-config accepts profile: fast with a threshold"
+case "$(vc "$VALID_BASE
+profile: turbo")" in FAIL*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "validate-config rejects an unknown profile"
+case "$(vc "$VALID_BASE
+profile: fast
+review_threshold_lines: -1")" in FAIL*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "validate-config rejects a negative review_threshold_lines"
+case "$(vc "$VALID_BASE
+review_threshold_lines: 400")" in PASS*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "a threshold on a standard-default repo is valid (specs may still ask for fast)"
+rm -rf "$PTMP"
+
+echo
+echo "forge-checks records the diff size the fast profile's review skip depends on:"
+DLTMP="$(mktemp -d)"
+git -C "$DLTMP" init -q -b develop
+git -C "$DLTMP" config user.email tester@forge.test
+git -C "$DLTMP" config user.name "forge tester"
+printf 'seed\n' > "$DLTMP/seed.txt"
+git -C "$DLTMP" add -A && git -C "$DLTMP" commit -qm base
+git -C "$DLTMP" checkout -q -b forge/fix/lines
+# 7 added lines across two files, one of which also removes a line.
+printf 'l1\nl2\nl3\nl4\nl5\n' > "$DLTMP/added.txt"
+printf 'replaced\ntail\n' > "$DLTMP/seed.txt"
+git -C "$DLTMP" add -A && git -C "$DLTMP" commit -qm change
+mkdir -p "$DLTMP/.forge"
+printf 'version: 1\nbase_branch: develop\ncommands:\n  test: "exit 0"\n' > "$DLTMP/.forge/config.yaml"
+FORGE_TARGET_REPO="$DLTMP" bash "$SCRIPTS_DIR/forge-checks.sh" --run-dir "$DLTMP/.forge/runs/rd" --base develop >/dev/null 2>&1
+# 5 added (added.txt) + 2 added + 1 removed (seed.txt) = 8 changed lines; the
+# ---/+++ file headers must not be counted.
+assert_eq "8" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["diff_lines"])' "$DLTMP/.forge/runs/rd/checks.json")" "counts changed lines, excluding diff file headers"
+rm -rf "$DLTMP"
+
+echo
 echo "forge-integrate pushes the branch, templates the PR body, and is idempotent:"
 FINT="$(mktemp -d)"; FBARE="$(mktemp -d)"; FBIN="$(mktemp -d)"
 # A gh shim: `pr list` returns $GH_EXISTING (default none); `pr create` records
@@ -318,6 +430,18 @@ case "$(cat "$REC")" in *"- [ ] Requests that receive a 503 are retried"*) got=y
 assert_eq "yes" "$got" "PR body templates the acceptance criteria as a checklist"
 case "$(cat "$REC")" in *"Opened by forge."*) got=yes ;; *) got=no ;; esac
 assert_eq "yes" "$got" "PR body carries the forge footer"
+case "$(cat "$REC")" in *"review was not run"*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "PR body does not claim a review that produced no artifact"
+
+# With a review.md in the run dir (the standard profile, or a fast task whose
+# diff cleared the threshold), the body reports both gates.
+REC3="$FBIN/gh_review.txt"
+printf '# Review\n\nverdict: PASS\n' > "$IRUN/review.md"
+PATH="$FBIN:$PATH" GH_RECORD="$REC3" FORGE_TARGET_REPO="$FINT" bash "$SCRIPTS_DIR/forge-integrate.sh" \
+  --task-id fix-intg000001 --run-dir "$IRUN" --spec "$FINT/tasks/fix-intg000001.md" >/dev/null 2>&1
+case "$(cat "$REC3")" in *"verify and review passed"*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "PR body reports both gates when review.md exists"
+rm -f "$IRUN/review.md"
 
 # Idempotency: an already-open PR is reused, and create is never called again.
 REC2="$FBIN/gh_dup.txt"
