@@ -40,6 +40,7 @@ the launcher falls back to the engine defaults documented below.
 | `vcs`                | object          | yes      | -                            | VCS host and CLI. See below. |
 | `commands`           | object          | yes      | -                            | How forge builds/checks this repo. See below. |
 | `autonomy`           | object          | no       | see below                    | Default tier and which task types must pause for plan approval. |
+| `surfaces`           | list of strings | no       | -                            | The areas of the system a task spec may declare as its `surface`. See [Surfaces](#surfaces). |
 | `review_lenses`      | list of strings | no       | -                            | When set, the review phase fans out one reviewer per lens. See below. |
 | `budget`             | object          | no       | see below                    | Retry cap and per-phase model selection. |
 
@@ -101,6 +102,22 @@ branch, no PR), whatever the task's `autonomy_tier` says.
 
 The full contract, including how profiles interact with autonomy tiers, is in
 [task-spec.md](task-spec.md#profiles).
+
+### Surfaces
+
+The areas of this system a task spec may name in its `surface` field:
+
+```yaml
+surfaces: [schema, auth, api, ui-shell, profile, products]
+```
+
+Tasks sharing a surface run serially and stacked; tasks on different surfaces run
+in parallel, each in its own git worktree. Declaring the list is what makes a
+typo'd surface fail the run rather than silently becoming its own group - which
+would look fine while quietly removing the collision protection the spec asked
+for. Omit the key to allow any surface string.
+
+The full contract is in [task-spec.md](task-spec.md#surfaces).
 
 ### `review_lenses`
 

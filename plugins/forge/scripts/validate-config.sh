@@ -156,6 +156,13 @@ if pb is not None:
             or not all(isinstance(x, str) and x.strip() for x in pb)):
         errors.append("protected_branches must be a non-empty list of strings")
 
+# surfaces
+sf = cfg.get("surfaces")
+if sf is not None:
+    if (not isinstance(sf, list) or not sf
+            or not all(isinstance(x, str) and x.strip() for x in sf)):
+        errors.append("surfaces must be a non-empty list of strings")
+
 # review_lenses
 rl = cfg.get("review_lenses")
 if rl is not None:

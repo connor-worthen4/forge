@@ -67,7 +67,8 @@ The frontmatter validates against [`schema/task-spec.schema.json`](../schema/tas
 | `context_refs` | list of strings            | **Pointers** to read: paths, URLs, related PRs. Never inline the content itself, only references to it. |
 | `priority`     | enum                       | `P0`, `P1`, `P2`, `P3` (queue ordering; lower number is more urgent). |
 | `base_branch`  | string                     | Branch the eventual PR targets. Defaults to the project's configured base (`develop`); override per task here. |
-| `depends_on`   | list of task ids           | Task ids that must be merged into the base branch before this task becomes selectable by `/forge:run-all`. `/forge:run-all` defers the task until each dependency is satisfied - detected by the dependency reaching `done`, its branch landing in the base, or its PR being merged on the host. This is how tasks that touch the same files avoid colliding: the dependent waits, then branches from a base that already holds the dependency's work. |
+| `surface`      | string                     | The area of the system this task changes (see [Surfaces](#surfaces)). Tasks sharing a surface run serially and stacked; different surfaces run in parallel. Must be one of the project config's `surfaces` when that list is declared. |
+| `depends_on`   | list of task ids           | Task ids this task must follow. Within one surface the dependency is satisfied by **stacking** - both run in the same pass and the dependent branches off the dependency's branch. Across surfaces (or when the dependency is not in this run) it is a **merge gate**: `/forge:run-all` defers the task until the dependency reaches `done`, its branch lands in the base, or its PR is merged on the host, so the dependent then branches from a base that already holds that work. |
 | `source`       | object `{kind, ref}`       | Provenance. `kind` is one of `cli`, `file`, `issue`, `notion`, `slack`, `email`, `api`, `other`; `ref` is the originating URL, path, or id. |
 
 The body (everything after the closing `---`) is the free-form prose
@@ -179,6 +180,58 @@ persists only the **terminal or parked** state to `run.json` (via
 `scripts/record-outcome.sh`): `done`, `pr_open`, `plan_gate`, `blocked`, or
 `failed`. The intermediate `planning`/`building`/`verifying`/`reviewing`/
 `integrating` values remain part of the contract for tooling and crash inspection.
+
+### Surfaces
+
+A **surface** is the area of the system a task changes - `schema`, `auth`, `api`,
+`ui-shell`, `profile`, `products`. It is how forge decides what may run at the
+same time.
+
+The problem it solves: forge cuts every task branch from the base independently,
+so two tasks editing the same files open branches that are each clean against the
+base yet collide the instant one merges. Declaring a shared surface makes that
+impossible.
+
+| Relationship | How they run |
+| ------------ | ------------ |
+| Same `surface` | **Serially, stacked.** Each task cuts its branch from the previous task's branch, so the earlier work is already in its history and the diffs stay linear. |
+| Different `surface` | **In parallel**, each task in its own git worktree under `.forge/worktrees/<task-id>`. |
+| No `surface` | Each task is its own group: independent, blocking nothing. |
+
+Order within a surface is `depends_on` first (restricted to tasks in the same
+group), then `priority`, then task id. A dependency cycle does not stall the run;
+it is flattened by the priority/id tiebreak.
+
+A task is only stacked on a predecessor that actually landed. If the earlier task
+blocked or failed, its branch holds half a change or none, so the next task falls
+back to the project base rather than building on work nobody accepted.
+
+Declare the valid surfaces in the project config to catch typos:
+
+```yaml
+surfaces: [schema, auth, api, ui-shell, profile, products]
+```
+
+With that list set, a spec naming a surface outside it fails the run instead of
+silently becoming its own group - which would look like it worked while removing
+the very collision protection it asked for.
+
+#### Worktrees
+
+Two tasks cannot both have a branch checked out in one working tree, so a run
+with more than one surface group gives each task its own worktree
+(`scripts/forge-worktree.sh`). A single-task or single-surface run keeps working
+directly in the main checkout, exactly as before.
+
+Worktrees live under `.forge/worktrees/<task-id>`. Because `.forge/` is
+gitignored, they never appear as untracked files, and a worktree holds no copy of
+`.forge/` itself - which is why every forge script resolves state (config, queue,
+run records) against the **main** worktree rather than the current directory.
+The main checkout is never moved off whatever branch a human left it on.
+
+`record-outcome.sh` prunes a task's worktree once its status is recorded.
+Pruning removes the tree, never the branch. A `blocked` task keeps its tree: it
+is a resumable pause, and that tree is where the work is inspected and resumed.
 
 ### The cached context brief
 

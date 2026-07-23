@@ -93,6 +93,13 @@
         }
       }
     },
+    "surfaces": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "The areas of this system a task spec may declare as its `surface` (for example [schema, auth, api, ui-shell, profile, products]). Declaring the list turns a typo'd surface into a run-time error instead of a task that silently runs alone in its own group. Omit to allow any surface string."
+    },
     "review_lenses": {
       "type": "array",
       "uniqueItems": true,

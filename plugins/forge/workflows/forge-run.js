@@ -14,16 +14,26 @@
 // args shape (assembled by the launcher):
 //   {
 //     pluginRoot, repoRoot,
-//     config: { base_branch, profile, review_threshold_lines,
+//     config: { base_branch, profile, review_threshold_lines, surfaces?:[...],
 //               vcs:{host,cli,pr_target}, commands:{...},
 //               autonomy:{default_tier, require_gate}, budget:{max_attempts, models:{...}},
 //               review_lenses?:[...] },
 //     tasks: [ { taskId, type, autonomy_tier|null, profile|null, hasAcceptanceCriteria,
-//                title, branch, specFile|null, goal|null, runDir,
-//                mode:"existing"|"greenfield", approved?, replanFeedback?, startPhase? } ]
+//                contextCacheFresh, surface|null, worktree|null, title, branch,
+//                specFile|null, goal|null, runDir, mode:"existing"|"greenfield",
+//                approved?, replanFeedback?, startPhase? } ]
 //   }
-// Returns: { results: [ { taskId, profile, tier, final, prUrl, branch, reason } ] }
+// Returns: { results: [ { taskId, profile, surface, tier, final, prUrl, branch,
+//                         stackedOn, reason } ] }
 //   where final is one of: done | pr_open | plan_gate | blocked | failed.
+//
+// Surfaces decide the run's concurrency. Tasks declaring the same `surface`
+// touch the same area of the system, so they run serially and STACKED - each
+// cuts its branch from the previous one's, keeping their diffs linear instead of
+// letting two branches edit the same files beside each other and collide the
+// moment one merges. Tasks on different surfaces cannot collide by construction,
+// so their groups run in parallel, each task in its own git worktree (the
+// launcher allocates one whenever a run has more than one group).
 
 export const meta = {
   name: 'forge-run',
@@ -141,17 +151,42 @@ function effectiveTier(task, profile) {
 // write its artifact without any ambiguity about where it is running.
 function contextBlock(task, tier, attempt) {
   const cli = vcs.cli || (vcs.host === 'gitlab' ? 'glab' : 'gh')
+  // A stacked task cuts from its predecessor's branch instead of the project
+  // base, so its branch already contains that work and the two can never
+  // collide. Everything downstream - the diff, the PR target - follows from it.
+  const effectiveBase = task.stackBase || baseBranch
   const lines = [
     `Task id: ${task.taskId}`,
     `Type: ${task.type}   Effective tier: ${tier}   Profile: ${effectiveProfile(task)}   Mode: ${task.mode}   Attempt: ${attempt}`,
-    `Working directory (the target repo, your cwd): ${args.repoRoot}`,
+    `Working directory (the target repo, your cwd): ${task.worktree || args.repoRoot}`,
     `Run dir (write your artifact here): ${task.runDir}`,
     `Forge plugin dir (its scripts/ live here): ${args.pluginRoot}`,
-    `Base branch: ${baseBranch}`,
+    `Base branch: ${effectiveBase}`,
     `Working branch: ${task.branch || '(none - tier-0 read-only)'}`,
+    `Surface: ${task.surface || '(none - this task runs on its own)'}`,
     `Commands: test=${q(commands.test)} build=${q(commands.build)} lint=${q(commands.lint)} typecheck=${q(commands.typecheck)}`,
     `VCS: host=${vcs.host || 'github'} cli=${cli} pr_target=${vcs.pr_target || baseBranch}`,
   ]
+  if (task.worktree) {
+    lines.push(
+      `WORKTREE: other tasks are running at the same time, so this task works in its own ` +
+        `git worktree instead of the main checkout. Before anything else, run:\n` +
+        `  bash "${args.pluginRoot}/scripts/forge-worktree.sh" add ${task.taskId} ` +
+        `--branch ${task.branch} --base ${effectiveBase}\n` +
+        `then cd into the path it prints and do ALL of your work there. The command is ` +
+        `idempotent - it reuses the tree if an earlier phase already created it, so run it ` +
+        `regardless of which phase you are. Never work in the main checkout: another task ` +
+        `has its own branch checked out there.`,
+    )
+  }
+  if (task.stackBase) {
+    lines.push(
+      `STACKED: this task shares surface "${task.surface}" with an earlier task in this run, ` +
+        `so it is stacked on ${task.stackBase}. That branch is your authoritative base - cut ` +
+        `from it and target it, overriding the usual base resolution. Its commits are part of ` +
+        `your starting point: build on top of them rather than reimplementing or reverting them.`,
+    )
+  }
   if (task.specFile) lines.push(`Task spec file (read this in full first): ${task.specFile}`)
   if (task.goal) lines.push(`Goal (greenfield, no spec file - this prompt is the whole task): ${task.goal}`)
   if (task.replanFeedback) lines.push(`RE-PLAN: a human reviewed your previous plan and requires these changes: ${task.replanFeedback}`)
@@ -321,9 +356,17 @@ if (!tasks.length) {
   return { results: [] }
 }
 
-const results = []
-for (const task of tasks) {
-  log(`forge: ${task.taskId} (${task.type}, ${effectiveProfile(task)} profile, ${task.mode}) starting`)
+// A predecessor is only worth stacking on when its branch actually holds
+// finished work. A task that died mid-build leaves a branch with half a change
+// on it (or none at all); stacking on that would fold unreviewed or broken work
+// into the next task's diff, so the successor falls back to the project base.
+const STACKABLE = ['pr_open', 'merged']
+
+async function runTaskSafely(task) {
+  log(
+    `forge: ${task.taskId} (${task.type}, ${effectiveProfile(task)} profile, ${task.mode}` +
+      `${task.surface ? `, surface ${task.surface}` : ''}) starting`,
+  )
   let outcome
   try {
     outcome = await runTask(task)
@@ -331,6 +374,7 @@ for (const task of tasks) {
     outcome = {
       taskId: task.taskId,
       profile: effectiveProfile(task),
+      surface: task.surface || null,
       final: 'failed',
       phase: 'intake',
       prUrl: null,
@@ -338,8 +382,64 @@ for (const task of tasks) {
       reason: `workflow error: ${e && e.message ? e.message : e}`,
     }
   }
-  results.push(outcome)
+  outcome.surface = task.surface || null
+  outcome.stackedOn = task.stackBase || null
   log(`forge: ${task.taskId} -> ${outcome.final}${outcome.reason ? ' (' + outcome.reason + ')' : ''}`)
+  return outcome
 }
+
+// One surface's tasks, in the stack order the launcher already resolved. They
+// run SERIALLY on purpose: each cuts from the previous one's branch, which does
+// not exist until that task is done. This is the whole conflict-avoidance
+// mechanism - two tasks editing the same area never branch beside each other.
+async function runGroup(group) {
+  const outcomes = []
+  let stackBase = null
+  for (const task of group.tasks) {
+    if (stackBase) task.stackBase = stackBase
+    const outcome = await runTaskSafely(task)
+    outcomes.push(outcome)
+    if (STACKABLE.includes(outcome.final) && outcome.branch) {
+      stackBase = outcome.branch
+    } else if (group.tasks.length > 1) {
+      // Keep the chain moving on the base rather than stacking on a branch whose
+      // task did not finish. Losing the stack is a smaller problem than building
+      // on top of work nobody accepted.
+      log(
+        `forge: ${task.taskId} did not land (${outcome.final}); later "${group.surface}" tasks ` +
+          `fall back to ${baseBranch} instead of stacking on it`,
+      )
+      stackBase = null
+    }
+  }
+  return outcomes
+}
+
+// Group by surface, preserving the launcher's order. Tasks without a surface are
+// each their own group, so an unlabeled task never waits on anything.
+const groupOrder = []
+const groupsBySurface = new Map()
+for (const task of tasks) {
+  const key = task.surface || ` solo:${task.taskId}`
+  if (!groupsBySurface.has(key)) {
+    groupsBySurface.set(key, { surface: task.surface || null, tasks: [] })
+    groupOrder.push(key)
+  }
+  groupsBySurface.get(key).tasks.push(task)
+}
+const groups = groupOrder.map((k) => groupsBySurface.get(k))
+
+if (groups.length > 1) {
+  log(
+    `forge: ${tasks.length} task(s) across ${groups.length} surface group(s) - ` +
+      `groups run in parallel, each task in its own worktree`,
+  )
+}
+
+// Different surfaces cannot collide by construction, so they run concurrently.
+// This is the one barrier in the pipeline: every group must finish before the
+// launcher can record outcomes and check the results as a set.
+const grouped = await parallel(groups.map((g) => () => runGroup(g)))
+const results = grouped.filter(Boolean).flat()
 
 return { results }

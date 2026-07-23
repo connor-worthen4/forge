@@ -12,10 +12,33 @@
 FORGE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(cd "$FORGE_LIB_DIR/.." && pwd)"
 TARGET="${FORGE_TARGET_REPO:-$PWD}"
-FORGE_DIR="$TARGET/.forge"
+
+# Resolve the MAIN worktree for a path inside a repo. `--git-common-dir` points
+# at the shared .git directory from anywhere, including a linked worktree, so its
+# parent is the main checkout. Prints nothing when the path is not in a repo.
+forge_main_worktree() {
+  local dir="$1" common
+  common="$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null)" || return 0
+  [ -n "$common" ] || return 0
+  case "$common" in
+    /*) ;;
+    *) common="$dir/$common" ;;
+  esac
+  (cd "$common/.." 2>/dev/null && pwd)
+}
+
+# All forge state (config, queue, runs, worktrees) lives in the MAIN worktree,
+# never in a linked one. .forge/ is gitignored, so a worktree created for a task
+# has no copy of it; resolving state relative to the cwd would silently give each
+# parallel task its own empty queue and run dir. TARGET stays the cwd, because
+# git operations must act on whichever tree the caller is actually in.
+FORGE_MAIN="$(forge_main_worktree "$TARGET")"
+[ -n "$FORGE_MAIN" ] || FORGE_MAIN="$TARGET"
+FORGE_DIR="$FORGE_MAIN/.forge"
 CONFIG="$FORGE_DIR/config.yaml"
 QUEUE="$FORGE_DIR/queue.json"
 RUNS_DIR="$FORGE_DIR/runs"
+WORKTREES_DIR="$FORGE_DIR/worktrees"
 
 # Fail fast with a clear message when a required command is missing.
 #   forge_require <cmd>...
@@ -84,13 +107,14 @@ PY
 }
 
 # Resolve a task's spec file: the queue entry's `file` key when it points at an
-# existing file, else the conventional tasks/<task-id>.md under the target repo.
-# Prints the path; the caller checks existence.
+# existing file, else the conventional tasks/<task-id>.md. Specs are resolved
+# against the main worktree, since a repo may gitignore tasks/ and a linked
+# worktree would then have no copy. Prints the path; the caller checks existence.
 #   spec_path <task_id>
 spec_path() {
   local f
   f="$(queue_get "$1" file "")"
-  if [ -z "$f" ] || [ ! -f "$f" ]; then f="$TARGET/tasks/$1.md"; fi
+  if [ -z "$f" ] || [ ! -f "$f" ]; then f="$FORGE_MAIN/tasks/$1.md"; fi
   printf '%s' "$f"
 }
 

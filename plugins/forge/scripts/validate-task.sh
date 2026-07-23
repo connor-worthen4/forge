@@ -134,6 +134,9 @@ def validate(path):
     if "title" in data and (not isinstance(data["title"], str) or not data["title"].strip()):
         errors.append("title must be a non-empty string")
 
+    if "surface" in data and (not isinstance(data["surface"], str) or not data["surface"].strip()):
+        errors.append("surface must be a non-empty string")
+
     criteria = data.get("acceptance_criteria")
     if criteria is not None:
         if not isinstance(criteria, list) or len(criteria) == 0:

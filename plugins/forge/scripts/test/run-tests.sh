@@ -338,6 +338,129 @@ assert_eq "yes" "$got" "a threshold on a standard-default repo is valid (specs m
 rm -rf "$PTMP"
 
 echo
+echo "surfaces group tasks: same surface stacks serially, different ones run in parallel:"
+SUR="$(mktemp -d)"
+git -C "$SUR" init -q -b develop
+git -C "$SUR" config user.email tester@forge.test
+git -C "$SUR" config user.name "forge tester"
+mkdir -p "$SUR/tasks" "$SUR/.forge"
+printf 'seed\n' > "$SUR/seed.txt"
+git -C "$SUR" add -A && git -C "$SUR" commit -qm base
+# write_sur <id> <priority> <surface-line> <depends-block>
+write_sur() {
+  cat > "$SUR/tasks/$1.md" <<SPEC
+---
+id: $1
+title: Surface fixture $1
+type: fix
+autonomy_tier: 1
+priority: $2
+$3
+$4
+acceptance_criteria:
+  - does a thing
+---
+Body.
+SPEC
+}
+write_sur fix-api000001 P2 "surface: api" ""
+write_sur fix-api000002 P1 "surface: api" ""
+write_sur fix-ui0000001 P2 "surface: ui-shell" ""
+
+sur_field() {  # sur_field <jq-ish python expr over tasks>
+  FORGE_TARGET_REPO="$SUR" bash "$SCRIPTS_DIR/forge-context.sh" --all 2>/dev/null \
+    | python3 -c "import sys, json; d=json.load(sys.stdin); print($1)"
+}
+assert_eq "api api ui-shell" "$(sur_field '" ".join(t["surface"] for t in d["tasks"])')" \
+  "tasks are emitted group-major, one surface at a time"
+assert_eq "fix-api000002 fix-api000001" \
+  "$(sur_field '" ".join(t["taskId"] for t in d["tasks"] if t["surface"]=="api")')" \
+  "within a surface, higher priority is stacked first"
+assert_eq "True" "$(sur_field 'all(t["worktree"] for t in d["tasks"])')" \
+  "a multi-surface run allocates a worktree per task"
+
+# depends_on inside one surface is satisfied by stacking, so it must not defer.
+write_sur fix-api000003 P0 "surface: api" "depends_on: [fix-api000001]"
+assert_eq "True" "$(sur_field 'any(t["taskId"]=="fix-api000003" for t in d["tasks"])')" \
+  "a same-surface dependency does not defer the dependent"
+assert_eq "fix-api000002 fix-api000001 fix-api000003" \
+  "$(sur_field '" ".join(t["taskId"] for t in d["tasks"] if t["surface"]=="api")')" \
+  "depends_on outranks priority when ordering a stack"
+rm "$SUR/tasks/fix-api000003.md"
+
+# A cross-surface dependency still waits for a real merge, as before.
+write_sur fix-ui0000002 P2 "surface: ui-shell" "depends_on: [fix-api000001]"
+assert_eq "True" \
+  "$(sur_field 'any(x["taskId"]=="fix-ui0000002" for x in d["deferred"])')" \
+  "a cross-surface dependency still defers until it merges"
+rm "$SUR/tasks/fix-ui0000002.md"
+
+# One surface only: nothing to run beside it, so no worktrees are allocated.
+rm "$SUR/tasks/fix-ui0000001.md"
+assert_eq "True" "$(sur_field 'all(t["worktree"] is None for t in d["tasks"])')" \
+  "a single-group run works in the main checkout, no worktree"
+
+# A declared surfaces list turns a typo into a run-time error.
+printf 'version: 1\nsurfaces: [api, ui-shell]\n' > "$SUR/.forge/config.yaml"
+write_sur fix-typo000001 P2 "surface: aip" ""
+FORGE_TARGET_REPO="$SUR" bash "$SCRIPTS_DIR/forge-context.sh" --all >/dev/null 2>&1
+assert_eq "1" "$?" "an undeclared surface fails the run"
+serr="$(FORGE_TARGET_REPO="$SUR" bash "$SCRIPTS_DIR/forge-context.sh" --all 2>&1 >/dev/null)"
+case "$serr" in *aip*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "the error names the offending surface"
+rm "$SUR/tasks/fix-typo000001.md"
+FORGE_TARGET_REPO="$SUR" bash "$SCRIPTS_DIR/forge-context.sh" --all >/dev/null 2>&1
+assert_eq "0" "$?" "declared surfaces still pass"
+rm -rf "$SUR"
+
+echo
+echo "forge-worktree isolates parallel tasks and never disturbs the main checkout:"
+WT="$(mktemp -d)"
+git -C "$WT" init -q -b develop
+git -C "$WT" config user.email tester@forge.test
+git -C "$WT" config user.name "forge tester"
+printf 'seed\n' > "$WT/seed.txt"
+git -C "$WT" add -A && git -C "$WT" commit -qm base
+mkdir -p "$WT/.forge"
+printf 'version: 1\nbase_branch: develop\n' > "$WT/.forge/config.yaml"
+wt() { FORGE_TARGET_REPO="$WT" bash "$SCRIPTS_DIR/forge-worktree.sh" "$@"; }
+
+wt path fix-wt000001 >/dev/null
+assert_eq "no" "$([ -d "$WT/.forge/worktrees/fix-wt000001" ] && echo yes || echo no)" \
+  "path is side-effect free"
+WP1="$(wt add fix-wt000001 --branch forge/fix/wt1 --base develop)"
+WP2="$(wt add fix-wt000002 --branch forge/fix/wt2 --base develop)"
+assert_eq "forge/fix/wt1" "$(git -C "$WP1" rev-parse --abbrev-ref HEAD)" "each tree holds its own branch"
+assert_eq "develop" "$(git -C "$WT" rev-parse --abbrev-ref HEAD)" "the main checkout never moves"
+
+printf 'A\n' > "$WP1/a.txt"; git -C "$WP1" add -A; git -C "$WP1" commit -qm "task A"
+printf 'B\n' > "$WP2/b.txt"; git -C "$WP2" add -A; git -C "$WP2" commit -qm "task B"
+assert_eq "no" "$([ -f "$WP1/b.txt" ] && echo yes || echo no)" "concurrent tasks cannot see each other's edits"
+
+# A stacked task cuts from the predecessor's branch and inherits its commits.
+WP3="$(wt add fix-wt000003 --branch forge/fix/wt3 --base forge/fix/wt1)"
+assert_eq "yes" "$([ -f "$WP3/a.txt" ] && echo yes || echo no)" "a stacked tree contains its predecessor's work"
+assert_eq "no" "$([ -f "$WP3/b.txt" ] && echo yes || echo no)" "and not an unrelated surface's work"
+
+WP1B="$(wt add fix-wt000001 --branch forge/fix/wt1 --base develop)"
+assert_eq "$WP1" "$WP1B" "add is idempotent: an existing tree is reused"
+assert_eq "yes" "$([ -f "$WP1/a.txt" ] && echo yes || echo no)" "reuse preserves the work already committed"
+
+# Forge state resolves to the MAIN worktree even when invoked from inside one.
+mkdir -p "$WT/.forge/runs/fix-wt000001" "$WT/.forge/runs/fix-wt000002"
+printf '{"status":"pr_open"}' > "$WT/.forge/runs/fix-wt000001/run.json"
+printf '{"status":"blocked"}' > "$WT/.forge/runs/fix-wt000002/run.json"
+got="$(cd "$WP1" && FORGE_TARGET_REPO="$WP1" bash "$SCRIPTS_DIR/forge-worktree.sh" list | wc -l | tr -d ' ')"
+assert_eq "3" "$got" "state resolves to the main worktree from inside a linked one"
+
+wt prune >/dev/null 2>&1
+assert_eq "no" "$([ -d "$WP1" ] && echo yes || echo no)" "prune reclaims a finished task's tree"
+assert_eq "yes" "$([ -d "$WP2" ] && echo yes || echo no)" "prune keeps a blocked task's tree for a human"
+assert_eq "yes" "$(git -C "$WT" show-ref --verify --quiet refs/heads/forge/fix/wt1 && echo yes || echo no)" \
+  "pruning a tree never deletes its branch"
+rm -rf "$WT"
+
+echo
 echo "the context brief is cached and invalidated by the files it cites:"
 CTX="$(mktemp -d)"
 git -C "$CTX" init -q -b develop

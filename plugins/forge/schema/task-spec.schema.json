@@ -58,6 +58,11 @@
         }
       ]
     },
+    "surface": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The area of the system this task changes (for example schema, auth, api, ui-shell). Tasks sharing a surface are run serially and stacked, each branching off the previous one's branch, so their diffs stay linear instead of colliding. Tasks on different surfaces run in parallel, each in its own git worktree. When the project config declares a `surfaces` list, this must be one of them."
+    },
     "constraints": {
       "type": "array",
       "description": "Invariants to preserve or things not to touch.",

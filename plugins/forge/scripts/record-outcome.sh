@@ -72,6 +72,13 @@ PY
 run_update "$task_id" "$fragment"
 queue_set_status "$task_id" "$final"
 
+# Reclaim the task's worktree now that its status is recorded. prune only removes
+# trees whose task is finished (done/pr_open/merged/failed) and never touches a
+# branch, so a blocked task keeps the tree a human will resume in.
+if [ -d "$WORKTREES_DIR" ]; then
+  "$SCRIPT_DIR/forge-worktree.sh" prune >/dev/null 2>&1 || true
+fi
+
 # A re-plan request (plan-feedback.md) is consumed once the task advances past
 # the gate; clear it so it does not force another re-plan on the next run. It
 # stays in place while the task is still parked at the gate.

@@ -41,6 +41,13 @@ autonomy:
   default_tier: 1         # 0 read-only | 1 branch+PR | 2 gated
   require_gate: [build]   # task types forced to tier-2 plan approval (park at plan_gate)
 
+# The areas of this system a task spec may name in its `surface` field. Tasks
+# sharing a surface run serially and stacked (each branching off the previous
+# one's branch); different surfaces run in parallel, one git worktree per task.
+# Declaring the list makes a typo'd surface fail the run instead of silently
+# becoming its own group. Omit to allow any surface string.
+surfaces: [schema, auth, api, ui-shell, profile, products]
+
 # Optional. Turn the review phase into a parallel fan-out: one reviewer per lens,
 # then a synth pass that consolidates their findings into review.md. Omit this
 # key for a single review agent.
