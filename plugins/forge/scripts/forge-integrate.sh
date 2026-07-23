@@ -13,8 +13,21 @@
 # It is idempotent: a crashed earlier run that already opened the PR is detected
 # and reused rather than duplicated. The PR body is templated here (no model): a
 # conventional-prefixed title from the spec type+title, the spec body verbatim,
-# the acceptance criteria as a checklist, a line noting verify and review passed,
-# and the standard "Opened by forge" footer.
+# the acceptance criteria as a checklist, a line naming the gates that actually
+# ran (review is absent when the fast profile skipped it), and the standard
+# "Opened by forge" footer.
+#
+# Two modes, chosen by config:
+#
+#   PR mode (default). Opens a PR from the task branch into the base and stops.
+#     forge never merges; a human reviews and merges every PR.
+#
+#   Integration mode, when .forge/config.yaml sets `integration_branch`. The task
+#     branch is merged into that branch instead, and a SINGLE open PR is kept
+#     from it into the base. Overnight tasks then compound on one branch and any
+#     conflict is resolved somewhere disposable, leaving one PR to review in the
+#     morning. A conflicting merge is aborted and reported as blocked rather than
+#     guessed at - the task branch is already pushed, so nothing is lost.
 #
 # Usage:
 #   forge-integrate.sh --task-id <id> [--run-dir <dir>] [--base <pr-target>]
@@ -29,7 +42,8 @@
 #
 # Output: pr.json in the run dir on success, plus a structured JSON object on
 #   stdout: {"status":"ok|blocked|fail","pr_url":...,"number":...,"branch":...,
-#   "base":...,"reason":...}. reason is null unless blocked/fail.
+#   "base":...,"merged_into":...,"reason":...}. reason is null unless
+#   blocked/fail; merged_into is null in PR mode.
 #
 # Exit status: 0 ok | 1 fail | 3 blocked | 2 usage/environment error.
 #
@@ -68,14 +82,19 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 2
 fi
 
+# Set once the task branch has been merged into the integration branch.
+merged_into=""
+
 # write_pr_json <url> <number>: record the durable PR artifact the workflow maps.
 write_pr_json() {
   local url="$1" num="$2"
   mkdir -p "$run_dir"
   jq -n --arg url "$url" --arg number "$num" --arg branch "$branch" --arg base "$base" \
+    --arg merged_into "$merged_into" \
     '{pr_url:$url,
       number:(if ($number|length)>0 then ($number|tonumber) else null end),
-      branch:$branch, base:$base}' \
+      branch:$branch, base:$base,
+      merged_into:(if ($merged_into|length)>0 then $merged_into else null end)}' \
     > "$run_dir/pr.json"
 }
 
@@ -85,11 +104,13 @@ result() {
   local status="$1" code="$2" pr_url="$3" number="$4" reason="$5"
   jq -n --arg status "$status" --arg pr_url "$pr_url" --arg number "$number" \
     --arg branch "$branch" --arg base "$base" --arg reason "$reason" \
+    --arg merged_into "$merged_into" \
     '{status:$status,
       pr_url:(if ($pr_url|length)>0 then $pr_url else null end),
       number:(if ($number|length)>0 then ($number|tonumber) else null end),
       branch:(if ($branch|length)>0 then $branch else null end),
       base:(if ($base|length)>0 then $base else null end),
+      merged_into:(if ($merged_into|length)>0 then $merged_into else null end),
       reason:(if ($reason|length)>0 then $reason else null end)}'
   exit "$code"
 }
@@ -134,27 +155,30 @@ if [ -z "$cli" ]; then
 fi
 command -v "$cli" >/dev/null 2>&1 || result fail 1 "" "" "VCS CLI not found: $cli"
 
-# Idempotency: reuse an open PR a crashed earlier run may have already created.
-existing_url=""
-existing_num=""
-case "$cli" in
-  gh)
-    found="$(gh pr list --head "$branch" --state open --json url,number 2>/dev/null)" || found="[]"
-    existing_url="$(printf '%s' "$found" | jq -r '.[0].url // empty' 2>/dev/null)"
-    existing_num="$(printf '%s' "$found" | jq -r '.[0].number // empty' 2>/dev/null)"
-    ;;
-  glab)
-    found="$(glab mr list --source-branch "$branch" 2>/dev/null)" || found=""
-    existing_url="$(printf '%s' "$found" | grep -Eo 'https?://[^ ]+' | head -n1)"
-    ;;
-esac
-if [ -n "$existing_url" ]; then
-  write_pr_json "$existing_url" "$existing_num"
-  result ok 0 "$existing_url" "$existing_num" ""
-fi
+# find_open_pr <head-branch>: set FOUND_URL/FOUND_NUM to an already-open PR for
+# that head, or empty. Used both for PR-mode idempotency (a crashed run may have
+# opened the PR already) and to keep integration mode at exactly one open PR.
+FOUND_URL=""
+FOUND_NUM=""
+find_open_pr() {
+  local head="$1" found=""
+  FOUND_URL=""; FOUND_NUM=""
+  case "$cli" in
+    gh)
+      found="$(gh pr list --head "$head" --state open --json url,number 2>/dev/null)" || found="[]"
+      FOUND_URL="$(printf '%s' "$found" | jq -r '.[0].url // empty' 2>/dev/null)"
+      FOUND_NUM="$(printf '%s' "$found" | jq -r '.[0].number // empty' 2>/dev/null)"
+      ;;
+    glab)
+      found="$(glab mr list --source-branch "$head" 2>/dev/null)" || found=""
+      FOUND_URL="$(printf '%s' "$found" | grep -Eo 'https?://[^ ]+' | head -n1)"
+      ;;
+  esac
+}
 
-# Push the branch. Auth/permission rejections are recoverable by a human (blocked);
-# any other push failure is a real error (fail).
+# The task branch is pushed in BOTH modes: in PR mode it is the PR's head, and in
+# integration mode it is the durable record of the task's own work, so the merge
+# into the integration branch is never the only copy of it.
 push_err="$(git push -u origin "$branch" 2>&1)"
 if [ "$?" -ne 0 ]; then
   if printf '%s' "$push_err" | grep -Eqi 'denied|permission|authentication|not authorized|403|401'; then
@@ -163,7 +187,8 @@ if [ "$?" -ne 0 ]; then
   result fail 1 "" "" "git push failed: ${push_err##*$'\n'}"
 fi
 
-# Build the PR title: the spec title with a conventional prefix by task type.
+# The task's human-readable title, used for the PR title in PR mode and the merge
+# commit subject in integration mode.
 title_raw=""
 type_raw=""
 if [ -n "$spec" ]; then
@@ -178,6 +203,122 @@ case "$type_raw" in
   chore) title="chore: $title_raw" ;;
   *) title="$title_raw" ;;
 esac
+
+integration_branch="$(config_get integration_branch "")"
+
+if [ -n "$integration_branch" ]; then
+  # ---- Integration mode --------------------------------------------------
+  #
+  # The merge cannot happen in the task's own tree: it would have to leave the
+  # task branch, and git refuses to check out one branch in two worktrees at
+  # once, which is exactly what parallel tasks would attempt. So every task
+  # merges in ONE dedicated worktree holding the integration branch, serialized
+  # by a lock. Concurrency here would interleave two merges on one ref.
+  lock_dir="$FORGE_DIR/integration.lock"
+  LOCK_HELD=0
+  release_lock() { [ "$LOCK_HELD" = "1" ] && rmdir "$lock_dir" 2>/dev/null; LOCK_HELD=0; }
+  trap release_lock EXIT
+
+  mkdir -p "$FORGE_DIR"
+  waited=0
+  # mkdir is atomic, so it is the lock. A stale lock from a killed run is the
+  # one failure mode; it surfaces as a clear blocked message rather than a hang.
+  until mkdir "$lock_dir" 2>/dev/null; do
+    sleep 2
+    waited=$((waited + 2))
+    if [ "$waited" -ge 300 ]; then
+      result blocked 3 "" "" "timed out after ${waited}s waiting for the integration-branch lock ($lock_dir). If no other forge run is active, remove that directory and re-run."
+    fi
+  done
+  LOCK_HELD=1
+
+  int_wt="$("$SCRIPT_DIR/forge-worktree.sh" add __integration \
+    --branch "$integration_branch" --base "$base" 2>/dev/null)"
+  if [ -z "$int_wt" ] || [ ! -d "$int_wt" ]; then
+    result fail 1 "" "" "could not prepare a worktree for integration branch $integration_branch"
+  fi
+
+  # Start from what the remote already has, so tasks merged by an earlier run
+  # (or another machine) are present and this merge lands on top of them.
+  git -C "$int_wt" fetch --quiet origin >/dev/null 2>&1 || true
+  if git -C "$int_wt" rev-parse --verify --quiet "origin/$integration_branch" >/dev/null; then
+    git -C "$int_wt" merge --ff-only "origin/$integration_branch" >/dev/null 2>&1 || true
+  fi
+
+  merge_msg="forge: merge $task_id${title_raw:+ ($title_raw)}"
+  merge_err="$(git -C "$int_wt" merge --no-ff -m "$merge_msg" "$branch" 2>&1)"
+  if [ "$?" -ne 0 ]; then
+    conflicts="$(git -C "$int_wt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
+    git -C "$int_wt" merge --abort >/dev/null 2>&1
+    # Never guess at a resolution. The task branch is pushed and intact, so the
+    # work is safe; a human resolves this on the integration branch, which is
+    # precisely the disposable place to do it.
+    if [ -n "$conflicts" ]; then
+      result blocked 3 "" "" "merging $branch into $integration_branch conflicts in: ${conflicts%% }. The task branch is pushed and intact; resolve on $integration_branch and re-run."
+    fi
+    result blocked 3 "" "" "merging $branch into $integration_branch failed: ${merge_err##*$'\n'}"
+  fi
+
+  push_err="$(git -C "$int_wt" push origin "$integration_branch" 2>&1)"
+  if [ "$?" -ne 0 ]; then
+    if printf '%s' "$push_err" | grep -Eqi 'denied|permission|authentication|not authorized|403|401'; then
+      result blocked 3 "" "" "push of $integration_branch rejected (authentication/permissions): ${push_err##*$'\n'}"
+    fi
+    result fail 1 "" "" "pushing $integration_branch failed: ${push_err##*$'\n'}"
+  fi
+  merged_into="$integration_branch"
+
+  # Exactly one PR out of the integration branch, reused across every task.
+  find_open_pr "$integration_branch"
+  if [ -n "$FOUND_URL" ]; then
+    write_pr_json "$FOUND_URL" "$FOUND_NUM"
+    release_lock
+    result ok 0 "$FOUND_URL" "$FOUND_NUM" ""
+  fi
+
+  int_body="$(mktemp)"
+  {
+    echo "Rolled-up forge work merged into \`$integration_branch\`."
+    echo
+    echo "Each task was verified (and reviewed, unless its profile skipped review) on its"
+    echo "own branch before being merged here. Per-task artifacts are under .forge/runs/."
+    echo
+    echo "Review this branch as a whole and merge it into \`$base\` when it looks right."
+    echo
+    echo "Opened by forge. Forge merges only into $integration_branch, never into $base."
+  } > "$int_body"
+  case "$cli" in
+    gh)
+      pr_out="$(gh pr create --base "$base" --head "$integration_branch" \
+        --title "forge: integration -> $base" --body-file "$int_body" 2>&1)"
+      pr_rc=$?
+      ;;
+    glab)
+      pr_out="$(glab mr create --source-branch "$integration_branch" --target-branch "$base" \
+        --title "forge: integration -> $base" --description "$(cat "$int_body")" --yes 2>&1)"
+      pr_rc=$?
+      ;;
+  esac
+  rm -f "$int_body"
+  if [ "$pr_rc" -ne 0 ]; then
+    # The merge already landed and is pushed, so this is not a failure of the
+    # task - only of opening the roll-up PR, which a human can do by hand.
+    result blocked 3 "" "" "merged into $integration_branch, but opening the PR into $base failed: ${pr_out##*$'\n'}"
+  fi
+  pr_url="$(printf '%s' "$pr_out" | grep -Eo 'https?://[^ ]+' | tail -n1)"
+  pr_num="$(printf '%s' "$pr_url" | grep -Eo '[0-9]+$' || true)"
+  write_pr_json "$pr_url" "$pr_num"
+  release_lock
+  result ok 0 "$pr_url" "$pr_num" ""
+fi
+
+# ---- PR mode (default) ---------------------------------------------------
+# Idempotency: reuse an open PR a crashed earlier run may have already created.
+find_open_pr "$branch"
+if [ -n "$FOUND_URL" ]; then
+  write_pr_json "$FOUND_URL" "$FOUND_NUM"
+  result ok 0 "$FOUND_URL" "$FOUND_NUM" ""
+fi
 
 # Build the PR body: spec body verbatim, criteria checklist, status line, footer.
 body_file="$(mktemp)"
@@ -199,7 +340,13 @@ PY
     spec_field "$spec" acceptance_criteria "[]" | jq -r '.[]? | "- [ ] " + .' 2>/dev/null
   fi
   echo
-  echo "verify and review passed (artifacts under .forge/runs/$task_id/)."
+  # Report only the gates that actually ran: the fast profile skips review for a
+  # small diff, and a PR must never claim a pass that nothing produced.
+  if [ -f "$run_dir/review.md" ]; then
+    echo "verify and review passed (artifacts under .forge/runs/$task_id/)."
+  else
+    echo "verify passed; review was not run for this task (artifacts under .forge/runs/$task_id/)."
+  fi
   echo
   echo "Opened by forge. Forge never merges; a human reviews and merges this PR."
 } > "$body_file"

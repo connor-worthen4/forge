@@ -3,8 +3,17 @@
 `block-git-writes.sh` is a `PreToolUse` hook that deterministically blocks
 git/gh operations which could merge code or mutate a protected branch. It
 enforces forge's contract mechanically: agents work on a feature branch and open
-a pull request into `develop`; they never merge, never push to a protected
-branch, never force-push, and never rewrite shared history.
+a pull request into `develop`; they never push to a protected branch, never
+force-push, and never rewrite shared history.
+
+There is exactly one merge exception, and it is opt-in. When `.forge/config.yaml`
+sets `integration_branch`, `git merge` is allowed **while that branch is the one
+checked out**, and only then - that branch is disposable scratch space where
+overnight tasks stack up, and a human still reviews a single PR from it into the
+base. With no `integration_branch` configured, every merge is blocked. The
+exception never widens: `gh pr merge`, `gh api .../merges`, force-pushes and
+pushes to protected branches stay blocked regardless, and a protected integration
+branch is refused outright (the protected list always wins).
 
 ## What it does
 
@@ -38,7 +47,8 @@ a PR may target.
 
 ### Blocked vs allowed (summary)
 
-Blocked: `git merge`; push to a protected branch (any remote/refspec, incl.
+Blocked: `git merge` (except onto a configured `integration_branch` that is not
+itself protected); push to a protected branch (any remote/refspec, incl.
 `HEAD:main` and `:branch` deletes); `git push --force/-f/--force-with-lease`
 and `+refspec` force pushes (`git push origin +branch`);
 `git push --all/--mirror`; `git branch -d/-D <protected>`; `git reset --hard` and

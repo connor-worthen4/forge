@@ -3,10 +3,11 @@
 # validate-task.sh - validate forge task spec file(s) against the task-spec schema.
 #
 # Parses the YAML frontmatter of each file and checks it against
-# schema/task-spec.schema.json: required fields present, enum values valid,
-# id format correct (and its prefix matches `type`), acceptance_criteria a
-# non-empty list, and no unknown fields. If the python `jsonschema` library is
-# installed it additionally runs a full Draft 2020-12 validation.
+# schema/task-spec.schema.json: required fields present, enum values valid
+# (type, priority, profile), id format correct (and its prefix matches `type`),
+# acceptance_criteria a non-empty list, and no unknown fields. If the python
+# `jsonschema` library is installed it additionally runs a full Draft 2020-12
+# validation.
 #
 # Usage:
 #   validate-task.sh FILE [FILE...]          human-readable PASS/FAIL; non-zero exit on any failure
@@ -111,7 +112,7 @@ def validate(path):
             if key not in allowed:
                 errors.append("unknown field not allowed by schema: %s" % key)
 
-    for key in ("type", "priority"):
+    for key in ("type", "priority", "profile"):
         values = enum_of(key)
         if values and key in data and data[key] not in values:
             errors.append("%s must be one of %s (got %r)" % (key, values, data[key]))
@@ -132,6 +133,9 @@ def validate(path):
 
     if "title" in data and (not isinstance(data["title"], str) or not data["title"].strip()):
         errors.append("title must be a non-empty string")
+
+    if "surface" in data and (not isinstance(data["surface"], str) or not data["surface"].strip()):
+        errors.append("surface must be a non-empty string")
 
     criteria = data.get("acceptance_criteria")
     if criteria is not None:

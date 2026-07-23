@@ -4,8 +4,15 @@
 #
 # Deterministically blocks git/gh operations that could merge code or mutate a
 # protected branch. forge's contract: agents work on a feature branch and open a
-# pull request into the integration branch (develop). They never merge, never
-# push to a protected branch, never force-push, and never rewrite shared history.
+# pull request into the base branch (develop). They never push to a protected
+# branch, never force-push, and never rewrite shared history.
+#
+# There is exactly one merge exception, and it is opt-in. When .forge/config.yaml
+# sets `integration_branch`, a merge is allowed while that branch is the one
+# checked out - and only then. That branch is disposable: overnight tasks stack
+# there so conflicts get resolved somewhere that does not matter, and a human
+# still reviews a single PR from it into the base. With no config the value is
+# empty and every merge is blocked, which is the default.
 #
 # Mechanism: on a blocked operation the script prints a structured PreToolUse
 # `permissionDecision: "deny"` to stdout and exits 0, so the decision is honored
@@ -23,11 +30,14 @@
 
 set -u
 
-INTEGRATION_BRANCH="${FORGE_INTEGRATION_BRANCH:-develop}"
+PR_TARGET_BRANCH="${FORGE_PR_TARGET_BRANCH:-${FORGE_INTEGRATION_BRANCH:-develop}}"
 DEFAULT_PROTECTED="main,master,develop"
-# Resolved after the hook cwd is known; see resolve_protected.
+# Both resolved after the hook cwd is known; see resolve_protected.
 PROTECTED_CSV=""
-PR_HINT="forge agents must open a PR into ${INTEGRATION_BRANCH} and let a human review and merge."
+# The one branch forge is allowed to merge into (config: integration_branch).
+# Empty means no merge is ever allowed, which is the default.
+INTEGRATION_BRANCH=""
+PR_HINT="forge agents must open a PR into ${PR_TARGET_BRANCH} and let a human review and merge."
 
 # --- jq guard ---------------------------------------------------------------
 # Without jq the structured input cannot be parsed. Fail closed: scan the raw
@@ -104,14 +114,54 @@ read_config_protected() {
   ' "$cfg" 2>/dev/null
 }
 
+# Read a top-level scalar key from a .forge/config.yaml using only awk. Strips a
+# trailing comment and surrounding quotes. Prints nothing when the key is absent.
+read_config_scalar() {
+  local cfg="$1" key="$2"
+  [ -f "$cfg" ] || return 0
+  awk -v k="$key" '
+    index($0, k ":") == 1 {
+      line = $0
+      sub(/#.*/, "", line)
+      sub(/^[^:]*:[ \t]*/, "", line)
+      gsub(/^[ \t]+|[ \t]+$/, "", line)
+      gsub(/^["'\'']|["'\'']$/, "", line)
+      print line
+      exit
+    }
+  ' "$cfg" 2>/dev/null
+}
+
 # Resolve the protected-branch list in priority order: .forge/config.yaml
 # (relative to the hook cwd) wins, then FORGE_PROTECTED_BRANCHES, then the
 # hardcoded default. An empty or absent config list falls through, so the
 # default still protects (fail safe).
+#
+# The integration branch resolves from the same config. It is the ONE branch
+# forge may merge into, and it is opt-in: with no config the value stays empty
+# and every merge is blocked exactly as before.
 resolve_protected() {
-  local from_cfg=""
-  if [ -n "${CWD:-}" ] && [ -f "${CWD}/.forge/config.yaml" ]; then
-    from_cfg="$(read_config_protected "${CWD}/.forge/config.yaml")"
+  local from_cfg="" cfg="" root="${CWD:-}"
+  # A task running in a linked worktree has no .forge/ of its own (it is
+  # gitignored, so it exists only in the main checkout). Without this, every
+  # parallel task would silently fall back to the default protected list and to
+  # "no integration branch" - fail-safe, but wrong for a repo that scoped either.
+  if [ -n "$root" ] && [ ! -f "${root}/.forge/config.yaml" ]; then
+    local common
+    common="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)"
+    if [ -n "$common" ]; then
+      case "$common" in
+        /*) ;;
+        *) common="${root}/${common}" ;;
+      esac
+      local main_root
+      main_root="$(cd "$common/.." 2>/dev/null && pwd)"
+      [ -n "$main_root" ] && [ -f "${main_root}/.forge/config.yaml" ] && root="$main_root"
+    fi
+  fi
+  if [ -n "$root" ] && [ -f "${root}/.forge/config.yaml" ]; then
+    cfg="${root}/.forge/config.yaml"
+    from_cfg="$(read_config_protected "$cfg")"
   fi
   if [ -n "$from_cfg" ]; then
     PROTECTED_CSV="$from_cfg"
@@ -120,6 +170,11 @@ resolve_protected() {
   else
     PROTECTED_CSV="$DEFAULT_PROTECTED"
   fi
+
+  if [ -n "$cfg" ]; then
+    INTEGRATION_BRANCH="$(read_config_scalar "$cfg" integration_branch)"
+  fi
+  [ -n "$INTEGRATION_BRANCH" ] || INTEGRATION_BRANCH="${FORGE_INTEGRATION_BRANCH_MERGE:-}"
 }
 
 # Emit a structured PreToolUse deny and exit. Exit 0 so the JSON decision on
@@ -286,7 +341,24 @@ check_git() {
 
   case "$sub" in
     merge)
-      deny "Blocked: 'git merge' is not allowed. ${PR_HINT}"
+      # The single exception to "forge never merges": merging INTO the
+      # configured integration branch. That branch is disposable scratch space -
+      # overnight tasks stack there and conflicts get resolved somewhere that
+      # does not matter - and a human still reviews one PR from it into the base.
+      # Everything the exception depends on is checked here: the branch must be
+      # configured, must be the branch actually checked out, and must not itself
+      # be protected (a protected integration branch is a misconfiguration, and
+      # the protected list always wins).
+      local cb; cb="$(current_branch "$cdir")"
+      if [ -z "$cb" ]; then
+        deny "Blocked: 'git merge' but the current branch could not be determined; failing closed. ${PR_HINT}"
+      fi
+      if [ -z "$INTEGRATION_BRANCH" ] || [ "$cb" != "$INTEGRATION_BRANCH" ]; then
+        deny "Blocked: 'git merge' on '${cb}'. forge may only merge into its configured integration branch${INTEGRATION_BRANCH:+ ('${INTEGRATION_BRANCH}')}. ${PR_HINT}"
+      fi
+      if is_protected "$cb"; then
+        deny "Blocked: integration branch '${cb}' is also in protected_branches, so merging into it is not allowed. Remove it from protected_branches or point integration_branch elsewhere."
+      fi
       ;;
     push)
       check_push "$cdir" "${args[@]+"${args[@]}"}"
@@ -372,8 +444,8 @@ check_gh() {
             esac
             j=$((j+1))
           done
-          if [ -n "$base" ] && is_protected "$base" && [ "$base" != "$INTEGRATION_BRANCH" ]; then
-            deny "Blocked: 'gh pr create --base ${base}' targets a protected branch. PRs must target ${INTEGRATION_BRANCH}. ${PR_HINT}"
+          if [ -n "$base" ] && is_protected "$base" && [ "$base" != "$PR_TARGET_BRANCH" ]; then
+            deny "Blocked: 'gh pr create --base ${base}' targets a protected branch. PRs must target ${PR_TARGET_BRANCH}. ${PR_HINT}"
           fi
           ;;
       esac

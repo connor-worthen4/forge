@@ -27,6 +27,11 @@
       "description": "0 = read-only report; 1 = branch + PR into base, never merges (default); 2 = gated, pause for human plan approval before building.",
       "enum": [0, 1, 2]
     },
+    "profile": {
+      "type": "string",
+      "description": "Pipeline shape. 'fast' = plan, build, verify, integrate (skips intake when this spec already carries acceptance_criteria, and skips review when the diff is under review_threshold_lines); 'standard' = the full intake, plan, build, verify, review, integrate pipeline; 'audit' = read-only intake, plan, report with no branch. Omit to inherit the project config's profile, which itself defaults to 'standard'.",
+      "enum": ["fast", "standard", "audit"]
+    },
     "acceptance_criteria": {
       "type": "array",
       "description": "Explicit, checkable list that verify and review test against. Concrete and verifiable, not vague.",
@@ -52,6 +57,11 @@
           }
         }
       ]
+    },
+    "surface": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The area of the system this task changes (for example schema, auth, api, ui-shell). Tasks sharing a surface are run serially and stacked, each branching off the previous one's branch, so their diffs stay linear instead of colliding. Tasks on different surfaces run in parallel, each in its own git worktree. When the project config declares a `surfaces` list, this must be one of them."
     },
     "constraints": {
       "type": "array",

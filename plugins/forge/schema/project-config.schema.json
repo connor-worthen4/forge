@@ -17,6 +17,12 @@
       "default": "develop",
       "description": "Default branch PRs target and feature branches are cut from."
     },
+    "integration_branch": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opt-in. The one branch forge is allowed to MERGE into (for example forge/integration). With it set, integrate merges each verified task branch here and keeps a single open PR from it into the base, so overnight tasks compound on one branch and conflicts are resolved somewhere disposable. Omit it and forge never merges anything, which is the default. It must not appear in protected_branches; the guardrail refuses the merge if it does.",
+      "not": { "enum": ["main", "master"] }
+    },
     "protected_branches": {
       "type": "array",
       "minItems": 1,
@@ -24,6 +30,18 @@
       "items": { "type": "string", "minLength": 1 },
       "default": ["main", "master", "develop"],
       "description": "Single source of truth for the git guardrail's protected list. The hook reads this (relative to cwd) before falling back to FORGE_PROTECTED_BRANCHES or its built-in default."
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["fast", "standard", "audit"],
+      "default": "standard",
+      "description": "Default pipeline shape for tasks in this repo that do not set their own `profile`. 'fast' trims intake and small-diff review; 'standard' is the full pipeline; 'audit' is the read-only investigation path."
+    },
+    "review_threshold_lines": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 400,
+      "description": "Fast profile only: review is skipped when the branch diff changes fewer than this many lines. A diff at or above the threshold still gets the full review phase. Ignored by the standard and audit profiles."
     },
     "vcs": {
       "type": "object",
@@ -80,6 +98,13 @@
           "description": "Task types forced to tier-2 plan approval regardless of their own tier. Such tasks park at plan_gate until /forge:approve."
         }
       }
+    },
+    "surfaces": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "The areas of this system a task spec may declare as its `surface` (for example [schema, auth, api, ui-shell, profile, products]). Declaring the list turns a typo'd surface into a run-time error instead of a task that silently runs alone in its own group. Omit to allow any surface string."
     },
     "review_lenses": {
       "type": "array",

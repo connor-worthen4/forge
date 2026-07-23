@@ -33,9 +33,11 @@ Works in two modes from the same agents: on an **existing repo** the phases gath
    - `audit` / `investigate` — tier 0, read-only: intake, plan, report. No branch, no PR.
    - `fix` / `refactor` / `chore` — tier 1, linear: intake, plan, build, verify, review, integrate, ending at an open PR.
    - `build` — tier 2, gated: stops after plan for human approval. `/forge:approve <task-id>` resumes it into the build loop; `/forge:approve <task-id> changes: <feedback>` triggers a re-plan.
-3. Each phase agent reads the prior phases' artifacts from `.forge/runs/<task-id>/` and files its own (context brief, plan, diff, verdicts, PR record).
-4. A failing verify or review loops back to build, capped by `budget.max_attempts`.
-5. Tier 1/2 ends at `pr_open`; a human reviews and merges. Tier 0 ends at `done` with a report.
+3. A task's **profile** trims that shape. `standard` (the default) runs every phase; `fast` skips intake when the spec already states its acceptance criteria and skips review when the diff is under `review_threshold_lines` (default 400); `audit` is the read-only path. Set it per task with `profile:` in the spec, or per repo with `profile:` in `.forge/config.yaml`. Profiles never skip the tier-2 plan gate. See [task-spec.md](plugins/forge/docs/task-spec.md#profiles).
+4. Each phase agent reads the prior phases' artifacts from `.forge/runs/<task-id>/` and files its own (context brief, plan, diff, verdicts, PR record). Intake's context brief is cached and reused across runs, invalidated the moment any file it cites changes.
+5. Tasks that declare the same `surface` run serially and **stacked** — each branches off the previous one's branch, so overlapping work stays linear instead of colliding at merge. Different surfaces run in **parallel**, one git worktree per task. See [task-spec.md](plugins/forge/docs/task-spec.md#surfaces).
+6. A failing verify or review loops back to build, capped by `budget.max_attempts`.
+7. Tier 1/2 ends at `pr_open`; a human reviews and merges. Tier 0 ends at `done` with a report. A repo that sets `integration_branch` instead has forge merge each task there and keeps **one** roll-up PR into the base — those tasks end at `merged`. Forge never merges into the base branch either way.
 
 ## Repository layout
 

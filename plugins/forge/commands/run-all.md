@@ -10,7 +10,12 @@ one forge-run workflow, then you report and stop. The forge plugin lives at
 `${CLAUDE_PLUGIN_ROOT}`; the target repo is the current working directory.
 
 Tasks already parked or finished are skipped: `plan_gate` items need
-`/forge:approve`, and `pr_open`/`done`/`blocked`/`failed` are not re-run here.
+`/forge:approve`, and `pr_open`/`merged`/`done`/`blocked`/`failed` are not re-run
+here.
+
+Tasks that declare the same `surface` run serially and stacked (each branching off
+the previous one's branch); different surfaces run in parallel, one git worktree
+per task. The launcher works all of that out - just pass its output through.
 
 Do exactly the following, then STOP:
 
@@ -58,4 +63,7 @@ Do exactly the following, then STOP:
    `/forge:approve`) or `blocked`/`failed` (with reasons), the conflict check's
    findings, and any `deferred` tasks with the dependency they wait on (each
    becomes runnable on a later `/forge:run-all`, once that dependency's PR is
-   merged into the base).
+   merged into the base). If any task came back `merged`, say so plainly: its
+   code is on the integration branch, and the single roll-up PR the results
+   report is the one thing to review. Group tasks by `surface` in the summary and
+   note which ones were stacked (`stackedOn`), since merge order follows from it.
