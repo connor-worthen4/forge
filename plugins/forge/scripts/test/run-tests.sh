@@ -202,5 +202,152 @@ assert_eq "no" "$got" "forge-diff excludes the already-merged sibling file"
 rm -rf "$DTMP" "$DBARE"
 
 echo
+echo "forge-checks records command evidence and classifies the overall result:"
+FCHK="$(mktemp -d)"
+git -C "$FCHK" init -q -b develop
+git -C "$FCHK" config user.email tester@forge.test
+git -C "$FCHK" config user.name "forge tester"
+printf 'seed\n' > "$FCHK/seed.txt"
+git -C "$FCHK" add -A && git -C "$FCHK" commit -qm base
+git -C "$FCHK" checkout -q -b forge/fix/checks && printf 'change\n' > "$FCHK/f.txt"
+git -C "$FCHK" add -A && git -C "$FCHK" commit -qm change
+mkdir -p "$FCHK/.forge"
+
+# run_checks <test-command>: run forge-checks against a config whose test command
+# is <test-command>, leaving CHK_OVERALL (from checks.json) and CHK_RC set.
+run_checks() {
+  cat > "$FCHK/.forge/config.yaml" <<YAML
+version: 1
+base_branch: develop
+commands:
+  test: "$1"
+YAML
+  local rd="$FCHK/.forge/runs/rd"
+  rm -rf "$rd"
+  FORGE_TARGET_REPO="$FCHK" bash "$SCRIPTS_DIR/forge-checks.sh" --run-dir "$rd" --base develop >/dev/null 2>&1
+  CHK_RC=$?
+  CHK_OVERALL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["overall"])' "$rd/checks.json" 2>/dev/null)"
+}
+
+run_checks "exit 0"
+assert_eq "pass" "$CHK_OVERALL" "all commands exit 0 -> overall pass"
+assert_eq "0" "$CHK_RC" "pass -> exit code 0"
+run_checks "exit 1"
+assert_eq "fail" "$CHK_OVERALL" "a command exiting non-zero -> overall fail"
+assert_eq "1" "$CHK_RC" "fail -> exit code 1"
+run_checks "forge_missing_tool_zzz"
+assert_eq "blocked" "$CHK_OVERALL" "a missing tool (exit 127) -> overall blocked"
+assert_eq "3" "$CHK_RC" "blocked -> exit code 3"
+# On the base branch there is no diff, so build delivered nothing to grade.
+git -C "$FCHK" checkout -q develop
+rm -rf "$FCHK/.forge/runs/rd"
+FORGE_TARGET_REPO="$FCHK" bash "$SCRIPTS_DIR/forge-checks.sh" --run-dir "$FCHK/.forge/runs/rd" --base develop >/dev/null 2>&1
+assert_eq "4" "$?" "empty diff -> exit code 4"
+assert_eq "empty-diff" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["overall"])' "$FCHK/.forge/runs/rd/checks.json")" "empty diff -> overall empty-diff"
+rm -rf "$FCHK"
+
+echo
+echo "forge-integrate pushes the branch, templates the PR body, and is idempotent:"
+FINT="$(mktemp -d)"; FBARE="$(mktemp -d)"; FBIN="$(mktemp -d)"
+# A gh shim: `pr list` returns $GH_EXISTING (default none); `pr create` records
+# the title and body it was given and prints a canned PR url.
+cat > "$FBIN/gh" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "pr list") echo "${GH_EXISTING:-[]}"; exit 0 ;;
+  "pr create")
+    shift 2; title=""; body_file=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --title) title="$2"; shift 2 ;;
+        --body-file) body_file="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    { echo "TITLE: $title"; echo "BODY:"; [ -n "$body_file" ] && cat "$body_file"; } > "${GH_RECORD:-/dev/null}"
+    echo "https://github.com/x/y/pull/42"; exit 0 ;;
+esac
+echo "gh shim: unhandled: $*" >&2; exit 1
+SH
+chmod +x "$FBIN/gh"
+git init -q --bare -b develop "$FBARE" >/dev/null 2>&1
+git -C "$FINT" init -q -b develop
+git -C "$FINT" config user.email tester@forge.test
+git -C "$FINT" config user.name "forge tester"
+git -C "$FINT" remote add origin "$FBARE"
+mkdir -p "$FINT/.forge" "$FINT/tasks"
+cat > "$FINT/.forge/config.yaml" <<'YAML'
+version: 1
+base_branch: develop
+vcs:
+  host: github
+  cli: gh
+YAML
+cat > "$FINT/tasks/fix-intg000001.md" <<'SPEC'
+---
+id: fix-intg000001
+title: Retry transient 503s
+type: fix
+autonomy_tier: 1
+acceptance_criteria:
+  - Requests that receive a 503 are retried
+  - Retries stop on a 2xx
+---
+The client surfaces transient 503s to callers. Add bounded retry.
+SPEC
+printf 'seed\n' > "$FINT/seed.txt"
+git -C "$FINT" add -A && git -C "$FINT" commit -qm base
+git -C "$FINT" push -q origin develop
+git -C "$FINT" checkout -q -b forge/fix/int && printf 'change\n' > "$FINT/f.txt"
+git -C "$FINT" add -A && git -C "$FINT" commit -qm "task change"
+
+IRUN="$FINT/.forge/runs/fix-intg000001"
+# Record files live outside the repo so the gh shim's writes never dirty the
+# working tree (real gh does not write into the repo either).
+REC="$FBIN/gh_new.txt"
+iout="$(PATH="$FBIN:$PATH" GH_RECORD="$REC" FORGE_TARGET_REPO="$FINT" bash "$SCRIPTS_DIR/forge-integrate.sh" \
+  --task-id fix-intg000001 --run-dir "$IRUN" --spec "$FINT/tasks/fix-intg000001.md" 2>/dev/null)"
+assert_eq "ok" "$(printf '%s' "$iout" | jq -r .status)" "new PR -> status ok"
+assert_eq "https://github.com/x/y/pull/42" "$(printf '%s' "$iout" | jq -r .pr_url)" "returns the created PR url"
+assert_eq "https://github.com/x/y/pull/42" "$(jq -r .pr_url "$IRUN/pr.json" 2>/dev/null)" "writes pr.json with the url"
+got="$(git -C "$FINT" ls-remote origin forge/fix/int | wc -l | tr -d ' ')"
+assert_eq "1" "$got" "the branch was pushed to origin"
+case "$(cat "$REC")" in *"fix: Retry transient 503s"*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "PR title carries the conventional prefix from the task type"
+case "$(cat "$REC")" in *"- [ ] Requests that receive a 503 are retried"*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "PR body templates the acceptance criteria as a checklist"
+case "$(cat "$REC")" in *"Opened by forge."*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "PR body carries the forge footer"
+
+# Idempotency: an already-open PR is reused, and create is never called again.
+REC2="$FBIN/gh_dup.txt"
+iout2="$(PATH="$FBIN:$PATH" GH_RECORD="$REC2" GH_EXISTING='[{"url":"https://github.com/x/y/pull/7","number":7}]' \
+  FORGE_TARGET_REPO="$FINT" bash "$SCRIPTS_DIR/forge-integrate.sh" \
+  --task-id fix-intg000001 --run-dir "$IRUN" --spec "$FINT/tasks/fix-intg000001.md" 2>/dev/null)"
+assert_eq "ok" "$(printf '%s' "$iout2" | jq -r .status)" "existing PR -> status ok"
+assert_eq "https://github.com/x/y/pull/7" "$(printf '%s' "$iout2" | jq -r .pr_url)" "reuses the existing PR url"
+[ -f "$REC2" ] && got=yes || got=no
+assert_eq "no" "$got" "does not call pr create when a PR already exists"
+
+# A repo with no remote is a human's job (blocked), not a failure.
+FNOR="$(mktemp -d)"
+git -C "$FNOR" init -q -b develop
+git -C "$FNOR" config user.email tester@forge.test
+git -C "$FNOR" config user.name "forge tester"
+mkdir -p "$FNOR/.forge" "$FNOR/tasks"
+cp "$FINT/.forge/config.yaml" "$FNOR/.forge/config.yaml"
+cp "$FINT/tasks/fix-intg000001.md" "$FNOR/tasks/"
+printf 'seed\n' > "$FNOR/seed.txt"
+git -C "$FNOR" add -A && git -C "$FNOR" commit -qm base
+git -C "$FNOR" checkout -q -b forge/fix/nor && printf 'change\n' > "$FNOR/f.txt"
+git -C "$FNOR" add -A && git -C "$FNOR" commit -qm change
+nout="$(PATH="$FBIN:$PATH" FORGE_TARGET_REPO="$FNOR" bash "$SCRIPTS_DIR/forge-integrate.sh" \
+  --task-id fix-intg000001 --run-dir "$FNOR/.forge/runs/fix-intg000001" --spec "$FNOR/tasks/fix-intg000001.md" 2>/dev/null)"
+assert_eq "blocked" "$(printf '%s' "$nout" | jq -r .status)" "no remote -> status blocked"
+case "$(printf '%s' "$nout" | jq -r .reason)" in *remote*) got=yes ;; *) got=no ;; esac
+assert_eq "yes" "$got" "blocked reason names the missing remote"
+rm -rf "$FINT" "$FBARE" "$FBIN" "$FNOR"
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

@@ -57,7 +57,7 @@ string means the phase skips that step.
 | Field       | Type   | Required | Default | Meaning |
 | ----------- | ------ | -------- | ------- | ------- |
 | `build`     | string | no       | `""`    | Build/compile command. |
-| `test`      | string | yes      | `""`    | Test command. The verify phase runs this. Should be non-empty for any repo with code-changing tasks. |
+| `test`      | string | yes      | `""`    | Test command. The verify phase runs this (via `forge-checks.sh`, which records the exit code). Should be non-empty for any repo with code-changing tasks. |
 | `lint`      | string | no       | `""`    | Lint command. |
 | `typecheck` | string | no       | `""`    | Type-check command. |
 

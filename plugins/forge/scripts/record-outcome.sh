@@ -56,9 +56,10 @@ if final in ("blocked", "failed") and reason:
     frag["error"] = {"message": reason, "phase": phase}
 artifacts = {}
 for key, fn in [("intake", "context-brief.md"), ("plan", "plan.md"),
-                ("diff", "diff.patch"), ("verdict", "verify.md"),
-                ("review", "review.md"), ("report", "report.md"),
-                ("pr", "pr.json"), ("transcript", "transcript.log")]:
+                ("diff", "diff.patch"), ("checks", "checks.json"),
+                ("verdict", "verify.md"), ("review", "review.md"),
+                ("report", "report.md"), ("pr", "pr.json"),
+                ("transcript", "transcript.log")]:
     fp = os.path.join(run_dir, fn)
     if os.path.exists(fp):
         artifacts[key] = fp

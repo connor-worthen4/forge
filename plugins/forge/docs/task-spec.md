@@ -89,6 +89,7 @@ produces in the same directory:
       context-brief.md            # produced by intake
       plan.md                     # produced by plan
       diff.patch                  # produced by build
+      checks.json                 # produced by verify (forge-checks.sh: recorded command results)
       verify.md                   # produced by verify
       review.md                   # produced by review
       report.md                   # produced by report (tier 0)

@@ -48,7 +48,7 @@ Works in two modes from the same agents: on an **existing repo** the phases gath
         commands/             # slash commands (/forge:draft, /forge:run, /forge:run-all, /forge:approve, /forge:status)
         workflows/            # forge-run.js — the pipeline orchestrator
         agents/               # one subagent per pipeline phase (forge-intake ... forge-report)
-        scripts/              # launcher glue: config assembly, ingester, validators, outcome recorder
+        scripts/              # launcher glue and phase-support scripts: config assembly, ingester, diff scoping, check runner (verify), PR opener (integrate), validators, outcome recorder
         schema/               # task-spec, run-record, project-config JSON schemas
         hooks/                # git-safety guardrail hook and its tests
         docs/                 # task-spec and project-config contracts
@@ -148,7 +148,7 @@ Run the test suites:
 
 ```
 plugins/forge/hooks/test/run-tests.sh    # guardrail hook unit tests
-plugins/forge/scripts/test/run-tests.sh  # config_get unit tests
+plugins/forge/scripts/test/run-tests.sh  # script unit + integration tests (config, diff, checks, integrate, conflicts)
 ```
 
 ## Branches
