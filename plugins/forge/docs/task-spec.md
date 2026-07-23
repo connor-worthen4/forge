@@ -130,6 +130,7 @@ produces in the same directory:
     <task-id>/
       run.json                    # the run record (this object)
       context-brief.md            # produced by intake
+      context-cache.json          # produced by intake (forge-context-cache.sh: the brief's invalidation set)
       plan.md                     # produced by plan
       diff.patch                  # produced by build
       checks.json                 # produced by verify (forge-checks.sh: recorded command results)
@@ -178,6 +179,40 @@ persists only the **terminal or parked** state to `run.json` (via
 `scripts/record-outcome.sh`): `done`, `pr_open`, `plan_gate`, `blocked`, or
 `failed`. The intermediate `planning`/`building`/`verifying`/`reviewing`/
 `integrating` values remain part of the contract for tooling and crash inspection.
+
+### The cached context brief
+
+`context-brief.md` is intake's map of the task: where the work lives (confirmed
+`path:line` entry points), which repo conventions govern it, and what the
+constraints are. Plan, build, review, and report all read it instead of
+re-deriving the codebase cold, so it is written once and reused.
+
+Reuse is safe only because invalidation is content-based. Intake finishes by
+stamping the brief:
+
+```
+scripts/forge-context-cache.sh stamp --run-dir .forge/runs/<task-id>
+```
+
+That extracts every repo file the brief cites and records each one's
+`git hash-object` into `context-cache.json`. On the next run the launcher checks
+it:
+
+```
+scripts/forge-context-cache.sh check --run-dir .forge/runs/<task-id>
+```
+
+Exit `0` means every cited file is byte-identical and the workflow skips intake,
+starting at plan. Exit `1` means the brief is stale - a cited file changed or
+disappeared, or the brief itself was edited - and intake runs again. There is no
+third answer: a missing cache, an unreadable one, or a failing check all count as
+stale, so the failure mode is always "re-run intake" rather than "trust a map
+that may have rotted".
+
+This makes precise citation load-bearing beyond readability: **the paths the
+brief cites are its invalidation set.** A file that genuinely bears on the task
+but is never cited will not invalidate the brief when it changes. To force a
+fresh intake by hand, delete `context-cache.json` from the run dir.
 
 ---
 

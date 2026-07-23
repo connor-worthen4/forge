@@ -149,10 +149,31 @@ Keep every Context-map, Repo-context-source, and Constraints entry backed by a
 `path:line`, a skill/file name, or a command you ran. State empty sections
 explicitly rather than omitting them.
 
+## Stamp the brief so later runs can reuse it
+
+The brief is cached across runs: a later run reuses it instead of paying for
+intake again, but only while the files it cites still hold. After writing the
+brief, run exactly once:
+
+```
+bash "<forge plugin dir>/scripts/forge-context-cache.sh" stamp --run-dir "<run dir>"
+```
+
+It extracts every repo file your brief cites and records each one's content hash
+in `context-cache.json`. A later run re-hashes them and re-runs intake the moment
+one changes, disappears, or the brief itself is edited - so a stale map can never
+send plan and build to `path:line` references that no longer hold.
+
+This is why citing precisely matters beyond readability: the paths you cite ARE
+the cache's invalidation set. A file that genuinely bears on the task but is
+never cited will not invalidate the brief when it changes. If stamping fails,
+say so in your result's `blocked_reason` field only if it also blocked the brief;
+otherwise proceed - an unstamped brief simply means the next run redoes intake.
+
 ## The result you return
 
 - Proceed (spec/goal is actionable, context located or assumptions stated):
-  `{"status":"ok","next_phase":"plan","artifacts":["context-brief.md"],"blocked_reason":null}`
+  `{"status":"ok","next_phase":"plan","artifacts":["context-brief.md","context-cache.json"],"blocked_reason":null}`
   `next_phase` is `"plan"` in every ok case, including tier-0 and tier-2.
 - Blocked (a human must fix the spec or clarify scope/goal first):
   `{"status":"blocked","next_phase":null,"artifacts":[],"blocked_reason":"<specific, actionable: which criteria are vague, the type mismatch, or the unlocatable scope, and what to do>"}`

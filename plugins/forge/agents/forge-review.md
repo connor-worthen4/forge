@@ -28,8 +28,17 @@ list. Your only write is review.md.
 Your prompt carries the task context (id, run dir, target repo, base branch,
 working branch, attempt number) and tells you which MODE you are in. Read: the
 spec file (if any) for criteria, constraints, and prose; the config if named;
-`<run dir>/plan.md` and `<run dir>/verify.md` as context. If the spec (when
-expected) is unreadable, return `fail`.
+`<run dir>/context-brief.md` for where the work lives and which repo conventions
+govern it; `<run dir>/plan.md` and `<run dir>/verify.md` as context. If the spec
+(when expected) is unreadable, return `fail`.
+
+Read the brief for orientation, not for verdicts. It saves you re-deriving the
+codebase cold - the entry points, the conventions the change must honor, the
+`path:line` neighborhood - so your reading time goes on the diff. It is still
+intake's account of the code, not the code: every finding you report is grounded
+in what you read yourself, exactly as if the brief did not exist. Where the brief
+and the code disagree, the code wins and the disagreement is itself worth
+reporting.
 
 ## Modes
 

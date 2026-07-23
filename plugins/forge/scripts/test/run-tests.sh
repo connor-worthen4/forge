@@ -338,6 +338,82 @@ assert_eq "yes" "$got" "a threshold on a standard-default repo is valid (specs m
 rm -rf "$PTMP"
 
 echo
+echo "the context brief is cached and invalidated by the files it cites:"
+CTX="$(mktemp -d)"
+git -C "$CTX" init -q -b develop
+git -C "$CTX" config user.email tester@forge.test
+git -C "$CTX" config user.name "forge tester"
+mkdir -p "$CTX/src" "$CTX/tasks" "$CTX/.forge/runs/fix-ctx0000001"
+printf 'export const a = 1\n' > "$CTX/src/api.ts"
+printf 'helper\n' > "$CTX/src/util.ts"
+git -C "$CTX" add -A && git -C "$CTX" commit -qm base
+CRUN="$CTX/.forge/runs/fix-ctx0000001"
+cat > "$CRUN/context-brief.md" <<'BRIEF'
+# Context brief: fix-ctx0000001
+
+## Context map
+- `src/api.ts:1` - the entry point in play
+- src/util.ts - shared helper
+- `src/absent.ts:9` - cited but does not exist
+- prose that is not a path at all
+
+## Repo context sources
+- none found
+BRIEF
+cat > "$CTX/tasks/fix-ctx0000001.md" <<'SPEC'
+---
+id: fix-ctx0000001
+title: Cached brief fixture
+type: fix
+autonomy_tier: 1
+acceptance_criteria:
+  - does a thing
+---
+Body.
+SPEC
+CCACHE="$SCRIPTS_DIR/forge-context-cache.sh"
+FORGE_TARGET_REPO="$CTX" bash "$CCACHE" stamp --run-dir "$CRUN" --repo "$CTX" >/dev/null 2>&1
+assert_eq "0" "$?" "stamping an existing brief succeeds"
+assert_eq '["src/api.ts","src/util.ts"]' \
+  "$(jq -c '[.files[].path]' "$CRUN/context-cache.json")" \
+  "records only the cited paths that resolve to real files"
+
+# cache_fresh: 1 when the launcher would reuse the brief, 0 when it re-runs intake.
+cache_fresh() {
+  FORGE_TARGET_REPO="$CTX" bash "$CCACHE" check --run-dir "$CRUN" --repo "$CTX" >/dev/null 2>&1 \
+    && echo 1 || echo 0
+}
+assert_eq "1" "$(cache_fresh)" "an untouched tree keeps the brief fresh"
+
+printf 'export const a = 2\n' > "$CTX/src/api.ts"
+assert_eq "0" "$(cache_fresh)" "editing a cited file invalidates the brief"
+got="$(FORGE_TARGET_REPO="$CTX" bash "$CCACHE" check --run-dir "$CRUN" --repo "$CTX" 2>/dev/null | jq -c .changed)"
+assert_eq '["src/api.ts"]' "$got" "the check names which cited file changed"
+
+git -C "$CTX" checkout -q -- src/api.ts
+assert_eq "1" "$(cache_fresh)" "reverting the file makes it fresh again"
+mv "$CTX/src/util.ts" "$CTX/src/util-renamed.ts"
+assert_eq "0" "$(cache_fresh)" "a cited file disappearing invalidates the brief"
+mv "$CTX/src/util-renamed.ts" "$CTX/src/util.ts"
+
+cp "$CRUN/context-brief.md" "$CTX/brief.orig"
+printf 'appended\n' >> "$CRUN/context-brief.md"
+assert_eq "0" "$(cache_fresh)" "editing the brief itself invalidates it"
+cp "$CTX/brief.orig" "$CRUN/context-brief.md"
+assert_eq "1" "$(cache_fresh)" "restoring the brief makes it fresh again"
+
+# The launcher surfaces freshness to the sandboxed workflow as contextCacheFresh.
+ctx_flag() {
+  FORGE_TARGET_REPO="$CTX" bash "$SCRIPTS_DIR/forge-context.sh" fix-ctx0000001 2>/dev/null \
+    | python3 -c 'import sys, json; print(json.load(sys.stdin)["tasks"][0]["contextCacheFresh"])'
+}
+assert_eq "True" "$(ctx_flag)" "the launcher reports a fresh cache to the workflow"
+rm "$CRUN/context-cache.json"
+assert_eq "False" "$(ctx_flag)" "an unstamped task reports a stale cache"
+assert_eq "0" "$(cache_fresh)" "a missing cache is stale, never an error"
+rm -rf "$CTX"
+
+echo
 echo "forge-checks records the diff size the fast profile's review skip depends on:"
 DLTMP="$(mktemp -d)"
 git -C "$DLTMP" init -q -b develop

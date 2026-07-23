@@ -235,13 +235,22 @@ async function runTask(task) {
   if (startPhase === 'intake' && profile === 'fast' && task.hasAcceptanceCriteria) {
     log(`forge: ${task.taskId} fast profile - skipping intake (spec already states acceptance criteria)`)
     startPhase = 'plan'
+  } else if (startPhase === 'intake' && task.contextCacheFresh) {
+    // A previous run already mapped this task and every file that map cites is
+    // byte-identical, so re-deriving it would produce the same brief. The
+    // launcher re-hashed those files just now; anything less than a clean match
+    // falls through to a full intake.
+    log(`forge: ${task.taskId} reusing the cached context brief - skipping intake`)
+    startPhase = 'plan'
   }
 
   // Tier 0 (the audit profile and the audit/investigate types): read-only
   // investigation -> report -> done.
   if (tier === 0) {
-    const i = await runPhase('intake', task, tier, 1)
-    if (!ok(i)) return endNonOk(out, i, 'intake')
+    if (startPhase === 'intake') {
+      const i = await runPhase('intake', task, tier, 1)
+      if (!ok(i)) return endNonOk(out, i, 'intake')
+    }
     const p = await runPhase('plan', task, tier, 1)
     if (!ok(p)) return endNonOk(out, p, 'plan')
     const r = await runPhase('report', task, tier, 1)

@@ -205,6 +205,30 @@ def feedback_for(task_id):
     return None
 
 
+def context_cache_fresh(task_id):
+    """True when this task's cached context brief still matches the working tree.
+
+    forge-context-cache.sh re-hashes every file the brief cites and exits 0 only
+    when all of them are unchanged. Any other outcome - no cache, an edited file,
+    a deleted file, a broken script - is treated as stale, so the failure mode is
+    always "run intake again" rather than "trust a map that may have rotted".
+    """
+    run_dir = os.path.join(runs_dir, task_id)
+    if not os.path.exists(os.path.join(run_dir, "context-cache.json")):
+        return False
+    try:
+        # Invoked through bash rather than relying on the exec bit: a checkout
+        # that dropped file modes would otherwise turn every cache hit into a
+        # silent miss, which is expensive but invisible.
+        proc = subprocess.run(
+            ["bash", os.path.join(plugin_dir, "scripts", "forge-context-cache.sh"),
+             "check", "--run-dir", run_dir, "--repo", target],
+            cwd=target, capture_output=True, text=True)
+    except Exception:
+        return False
+    return proc.returncode == 0
+
+
 # --- depends_on merge gate (run-all only) ---------------------------------
 #
 # A task is deferred from a /forge:run-all until every id in its `depends_on`
@@ -308,6 +332,9 @@ def make_task(task_id, ttype, autonomy_tier, title, spec_file, goal_text,
         # runs in a sandbox and cannot read the spec, so this disk fact is
         # resolved here; the fast profile uses it to skip intake.
         "hasAcceptanceCriteria": bool(criteria),
+        # Whether a previous run's context brief is still valid for this working
+        # tree. Also a disk fact the sandboxed workflow cannot check itself.
+        "contextCacheFresh": context_cache_fresh(task_id),
         "title": title or task_id,
         "branch": branch,
         "specFile": spec_file,
