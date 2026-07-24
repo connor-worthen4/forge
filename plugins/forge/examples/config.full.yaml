@@ -73,4 +73,5 @@ budget:
     review: sonnet
     integrate: haiku
     report: haiku
+    gate: haiku         # the artifact gate runs one script and reports its JSON; haiku is the default
     # opus is reserved for explicit tier-2 overrides, never a phase default at this budget.

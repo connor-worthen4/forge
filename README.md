@@ -35,9 +35,10 @@ Works in two modes from the same agents: on an **existing repo** the phases gath
    - `build` — tier 2, gated: stops after plan for human approval. `/forge:approve <task-id>` resumes it into the build loop; `/forge:approve <task-id> changes: <feedback>` triggers a re-plan.
 3. A task's **profile** trims that shape. `standard` (the default) runs every phase; `fast` skips intake when the spec already states its acceptance criteria and skips review when the diff is under `review_threshold_lines` (default 400); `audit` is the read-only path. Set it per task with `profile:` in the spec, or per repo with `profile:` in `.forge/config.yaml`. Profiles never skip the tier-2 plan gate. See [task-spec.md](plugins/forge/docs/task-spec.md#profiles).
 4. Each phase agent reads the prior phases' artifacts from `.forge/runs/<task-id>/` and files its own (context brief, plan, diff, verdicts, PR record). Intake's context brief is cached and reused across runs, invalidated the moment any file it cites changes.
-5. Tasks that declare the same `surface` run serially and **stacked** — each branches off the previous one's branch, so overlapping work stays linear instead of colliding at merge. Different surfaces run in **parallel**, one git worktree per task. See [task-spec.md](plugins/forge/docs/task-spec.md#surfaces).
-6. A failing verify or review loops back to build, capped by `budget.max_attempts`.
-7. Tier 1/2 ends at `pr_open`; a human reviews and merges. Tier 0 ends at `done` with a report. A repo that sets `integration_branch` instead has forge merge each task there and keeps **one** roll-up PR into the base — those tasks end at `merged`. Forge never merges into the base branch either way.
+5. After each phase, an **artifact gate** checks the run dir: a phase that reports success but did not file its artifact parks the task `blocked` instead of advancing on a claim. See [task-spec.md](plugins/forge/docs/task-spec.md#the-artifact-gate).
+6. Tasks that declare the same `surface` run serially and **stacked** — each branches off the previous one's branch, so overlapping work stays linear instead of colliding at merge. Different surfaces run in **parallel**, one git worktree per task. Surfaces are a label you declare, not overlap forge detects: two tasks on different surfaces run in parallel even if they edit the same file. See [task-spec.md](plugins/forge/docs/task-spec.md#surfaces).
+7. A failing verify or review loops back to build, capped by `budget.max_attempts`.
+8. Tier 1/2 ends at `pr_open`; a human reviews and merges. Tier 0 ends at `done` with a report. A repo that sets `integration_branch` instead has forge merge each task there and keeps **one** roll-up PR into the base — those tasks end at `merged`. Forge never merges into the base branch either way.
 
 ## Repository layout
 
@@ -49,7 +50,7 @@ Works in two modes from the same agents: on an **existing repo** the phases gath
           plugin.json         # plugin manifest
         commands/             # slash commands (/forge:draft, /forge:run, /forge:run-all, /forge:approve, /forge:status)
         workflows/            # forge-run.js — the pipeline orchestrator
-        agents/               # one subagent per pipeline phase (forge-intake ... forge-report)
+        agents/               # one subagent per pipeline phase (forge-intake ... forge-report), plus forge-gate (artifact gate)
         scripts/              # launcher glue and phase-support scripts: config assembly, ingester, diff scoping, check runner (verify), PR opener (integrate), validators, outcome recorder
         schema/               # task-spec, run-record, project-config JSON schemas
         hooks/                # git-safety guardrail hook and its tests
