@@ -61,16 +61,60 @@ The frontmatter validates against [`schema/task-spec.schema.json`](../schema/tas
 
 | Field          | Type                       | Description |
 | -------------- | -------------------------- | ----------- |
+| `profile`      | enum                       | Pipeline shape: `fast`, `standard`, or `audit` (see [Profiles](#profiles)). Omit to inherit the repo's `profile` from `.forge/config.yaml`, which itself defaults to `standard`. |
 | `scope`        | string or list of strings  | Files, dirs, or modules likely in play, or the literal `unknown - investigate`. |
 | `constraints`  | list of strings            | Invariants to preserve or things not to touch (e.g. "minimal diff", "do not change the public API"). |
 | `context_refs` | list of strings            | **Pointers** to read: paths, URLs, related PRs. Never inline the content itself, only references to it. |
 | `priority`     | enum                       | `P0`, `P1`, `P2`, `P3` (queue ordering; lower number is more urgent). |
 | `base_branch`  | string                     | Branch the eventual PR targets. Defaults to the project's configured base (`develop`); override per task here. |
-| `depends_on`   | list of task ids           | Task ids that must be merged into the base branch before this task becomes selectable by `/forge:run-all`. `/forge:run-all` defers the task until each dependency is satisfied - detected by the dependency reaching `done`, its branch landing in the base, or its PR being merged on the host. This is how tasks that touch the same files avoid colliding: the dependent waits, then branches from a base that already holds the dependency's work. |
+| `surface`      | string                     | The area of the system this task changes (see [Surfaces](#surfaces)). Tasks sharing a surface run serially and stacked; different surfaces run in parallel. Must be one of the project config's `surfaces` when that list is declared. |
+| `depends_on`   | list of task ids           | Task ids this task must follow. Within one surface the dependency is satisfied by **stacking** - both run in the same pass and the dependent branches off the dependency's branch. Across surfaces (or when the dependency is not in this run) it is a **merge gate**: `/forge:run-all` defers the task until the dependency reaches `done`, its branch lands in the base, or its PR is merged on the host, so the dependent then branches from a base that already holds that work. |
 | `source`       | object `{kind, ref}`       | Provenance. `kind` is one of `cli`, `file`, `issue`, `notion`, `slack`, `email`, `api`, `other`; `ref` is the originating URL, path, or id. |
 
 The body (everything after the closing `---`) is the free-form prose
 description of the ask. It is not schema-validated.
+
+### Profiles
+
+A **profile** is the pipeline *shape* a task runs through. It is orthogonal to
+`autonomy_tier`, which is about *human approval*: the profile decides which
+phases run, the tier decides whether a human approves the plan first.
+
+| Profile    | Phases                                                       | Use for |
+| ---------- | ------------------------------------------------------------ | ------- |
+| `fast`     | plan, build, verify (script), integrate (script)              | Small, well-specified greenfield work. |
+| `standard` | intake, plan, build, verify, review, integrate                | The default. Anything you have not deliberately decided is small. |
+| `audit`    | intake, plan, report                                          | Read-only investigation. No branch, no build, no PR. |
+
+**`fast`** trims two things:
+
+- **Intake is skipped when the spec already states `acceptance_criteria`.**
+  Pinning those down is intake's job, so with them present there is nothing left
+  for it to establish. A greenfield goal prompt (`/forge:run "<goal>"`) carries
+  no criteria and still runs intake.
+- **Review is skipped when the diff is under `review_threshold_lines`** (default
+  `400`, configured per repo). Below that there is too little surface for an
+  adversarial pass to earn its cost. The line count is the one `forge-checks.sh`
+  measured and recorded in `checks.json`, never a model's estimate; if the count
+  is unavailable, review runs.
+
+Verify and integrate are script-backed in every profile, but under `fast` verify
+runs in SCRIPT mode: `forge-checks.sh`'s `overall` is the verdict, with no
+per-criterion grading pass. That is the trade the profile is making, so use it
+only where the criteria are mechanical enough for the configured checks to cover
+them.
+
+**`audit`** is the read-only path and forces tier 0, whatever `autonomy_tier`
+says - it can produce no branch and no PR, so no approval gate applies. The
+`audit` and `investigate` task *types* already take this path regardless of
+profile.
+
+**`fast` does not weaken the plan gate.** A task type listed in the config's
+`autonomy.require_gate` still parks at `plan_gate` for approval: profiles trim
+ceremony, never human approval.
+
+Precedence: the spec's `profile`, else the repo config's `profile`, else
+`standard`.
 
 ---
 
@@ -87,8 +131,10 @@ produces in the same directory:
     <task-id>/
       run.json                    # the run record (this object)
       context-brief.md            # produced by intake
+      context-cache.json          # stamped after intake by the artifact gate (the brief's invalidation set)
       plan.md                     # produced by plan
       diff.patch                  # produced by build
+      checks.json                 # produced by verify (forge-checks.sh: recorded command results)
       verify.md                   # produced by verify
       review.md                   # produced by review
       report.md                   # produced by report (tier 0)
@@ -123,7 +169,7 @@ cares about. Mapping:
 | `build`         | `building` |
 | `verify`        | `verifying` |
 | `review`        | `reviewing` |
-| `integrate`     | `integrating`, `pr_open` |
+| `integrate`     | `integrating`, `pr_open`, `merged` |
 | `report`        | `planning` (tier-0 report in progress) |
 | (terminal)      | `done`, `failed` - `current_phase` keeps its last value (`integrate` for tiers 1-2, `report` for tier 0) |
 | (pause)         | `blocked` |
@@ -131,9 +177,168 @@ cares about. Mapping:
 The state machine below is the conceptual pipeline. The forge-run workflow drives
 the phases in memory and shows each transition live in the workflow view; it
 persists only the **terminal or parked** state to `run.json` (via
-`scripts/record-outcome.sh`): `done`, `pr_open`, `plan_gate`, `blocked`, or
-`failed`. The intermediate `planning`/`building`/`verifying`/`reviewing`/
-`integrating` values remain part of the contract for tooling and crash inspection.
+`scripts/record-outcome.sh`): `done`, `pr_open`, `merged`, `plan_gate`,
+`blocked`, or `failed`. The intermediate `planning`/`building`/`verifying`/
+`reviewing`/`integrating` values remain part of the contract for tooling and
+crash inspection.
+
+### The artifact gate
+
+Every phase reports its own outcome, including the artifacts it claims to have
+filed. The forge-run workflow runs in a sandbox with no filesystem access, so
+that self-report used to be the only evidence there was - and a claim is not a
+file. A write that was blocked by a tool guard, refused, or simply never
+attempted still comes back as `status: ok` with an `artifacts` list, and the
+pipeline advances on a brief, plan, or report that is not on disk.
+
+So each phase that reports success is followed by a **gate**: a minimal agent
+(`agents/forge-gate.md`, Bash only) that runs
+[`scripts/forge-phase-gate.sh`](../scripts/forge-phase-gate.sh) and does nothing
+else. The script is the one step in the pipeline that actually looks at the run
+dir. It checks that phase's expected artifacts:
+
+| Phase | Must have filed |
+| ----- | --------------- |
+| `intake` | `context-brief.md` |
+| `plan` | `plan.md` |
+| `build` | `diff.patch` |
+| `verify` | `checks.json`, `verify.md` |
+| `review` | `review.md` |
+| `integrate` | `pr.json` |
+| `report` | `report.md` |
+
+An artifact counts as filed only when it exists and is non-empty - a zero-byte
+`plan.md` is a failed write, not a plan. A phase that claims work it did not file
+parks the task **`blocked`**, naming the missing file, rather than carrying the
+claim forward. It is deliberately not `failed`-and-retried: a missing artifact is
+not evidence the code is wrong, so retrying build would burn an attempt on the
+wrong problem.
+
+Two deliberate non-failures:
+
+- If the gate agent itself never runs, the pipeline logs it and advances. The
+  gate cannot distinguish "artifact missing" from "checker died", and throwing
+  away finished work because the checker broke is the worse outcome.
+- A failed context-cache stamp (below) does not fail the gate. The cache is an
+  optimization; losing it only means the next run redoes intake.
+
+The gate is also where `context-cache.json` gets stamped after a successful
+intake, so the cache is a property of the pipeline rather than of the intake
+agent remembering to run one more command.
+
+### Surfaces
+
+A **surface** is the area of the system a task changes - `schema`, `auth`, `api`,
+`ui-shell`, `profile`, `products`. It is how forge decides what may run at the
+same time.
+
+The problem it solves: forge cuts every task branch from the base independently,
+so two tasks editing the same files open branches that are each clean against the
+base yet collide the instant one merges. Declaring a shared surface makes that
+impossible.
+
+| Relationship | How they run |
+| ------------ | ------------ |
+| Same `surface` | **Serially, stacked.** Each task cuts its branch from the previous task's branch, so the earlier work is already in its history and the diffs stay linear. |
+| Different `surface` | **In parallel**, each task in its own git worktree under `.forge/worktrees/<task-id>`. |
+| No `surface` | Each task is its own group: independent, blocking nothing. |
+
+Order within a surface is `depends_on` first (restricted to tasks in the same
+group), then `priority`, then task id. A dependency cycle does not stall the run;
+it is flattened by the priority/id tiebreak.
+
+A task is only stacked on a predecessor that actually landed. If the earlier task
+blocked or failed, its branch holds half a change or none, so the next task falls
+back to the project base rather than building on work nobody accepted.
+
+Declare the valid surfaces in the project config to catch typos:
+
+```yaml
+surfaces: [schema, auth, api, ui-shell, profile, products]
+```
+
+With that list set, a spec naming a surface outside it fails the run instead of
+silently becoming its own group - which would look like it worked while removing
+the very collision protection it asked for.
+
+#### A surface is a declaration, not overlap detection
+
+Forge does not infer surfaces, and it does not check whether two tasks are about
+to edit the same file before running them in parallel. `surface` is a claim the
+spec makes about where the work lives, and the parallelism follows from that
+claim. **Label two tasks with different surfaces and forge will run them in
+parallel even if they both end up editing the same file** - for example two
+"independent" tasks that each add cases to the same test file. That is the design:
+the labels are yours to get right, and forge treats them as the contract.
+
+Two safety nets sit on either side of the run, neither of which is the surface
+label itself:
+
+- **Before**: `/forge:draft` builds a `file -> [task ids]` map while it writes the
+  specs and resolves any overlap it finds - by merging the tasks, by `depends_on`,
+  or by putting them on the same surface so they stack.
+- **After**: `scripts/check-conflicts.sh` compares the open forge PRs and reports
+  branches that are each clean against the base yet collide with a sibling on
+  sequential merge.
+
+So the practical rule: a surface should name the area of the system a task
+*touches*, not the feature it *delivers*. When two tasks plausibly reach the same
+files, give them the same surface (they stack, cheaply and linearly) rather than
+different ones. An over-broad surface costs you serialization; an over-narrow one
+costs you a merge conflict.
+
+#### Worktrees
+
+Two tasks cannot both have a branch checked out in one working tree, so a run
+with more than one surface group gives each task its own worktree
+(`scripts/forge-worktree.sh`). A single-task or single-surface run keeps working
+directly in the main checkout, exactly as before.
+
+Worktrees live under `.forge/worktrees/<task-id>`. Because `.forge/` is
+gitignored, they never appear as untracked files, and a worktree holds no copy of
+`.forge/` itself - which is why every forge script resolves state (config, queue,
+run records) against the **main** worktree rather than the current directory.
+The main checkout is never moved off whatever branch a human left it on.
+
+`record-outcome.sh` prunes a task's worktree once its status is recorded.
+Pruning removes the tree, never the branch. A `blocked` task keeps its tree: it
+is a resumable pause, and that tree is where the work is inspected and resumed.
+
+### The cached context brief
+
+`context-brief.md` is intake's map of the task: where the work lives (confirmed
+`path:line` entry points), which repo conventions govern it, and what the
+constraints are. Plan, build, review, and report all read it instead of
+re-deriving the codebase cold, so it is written once and reused.
+
+Reuse is safe only because invalidation is content-based. Once intake files the
+brief, the [artifact gate](#the-artifact-gate) stamps it:
+
+```
+scripts/forge-context-cache.sh stamp --run-dir .forge/runs/<task-id>
+```
+
+That extracts every repo file the brief cites and records each one's
+`git hash-object` into `context-cache.json`. The stamp runs from the pipeline, not
+from the intake agent: a step the model has to remember is a step that silently
+does not happen, and an unstamped brief looks exactly like a working cache that
+never hits. On the next run the launcher checks it:
+
+```
+scripts/forge-context-cache.sh check --run-dir .forge/runs/<task-id>
+```
+
+Exit `0` means every cited file is byte-identical and the workflow skips intake,
+starting at plan. Exit `1` means the brief is stale - a cited file changed or
+disappeared, or the brief itself was edited - and intake runs again. There is no
+third answer: a missing cache, an unreadable one, or a failing check all count as
+stale, so the failure mode is always "re-run intake" rather than "trust a map
+that may have rotted".
+
+This makes precise citation load-bearing beyond readability: **the paths the
+brief cites are its invalidation set.** A file that genuinely bears on the task
+but is never cited will not invalidate the brief when it changes. To force a
+fresh intake by hand, delete `context-cache.json` from the run dir.
 
 ---
 
@@ -150,10 +355,13 @@ stateDiagram-v2
     plan_gate --> planning: changes requested
     building --> verifying: build complete
     verifying --> reviewing: checks pass
+    verifying --> integrating: checks pass, fast profile skipped review
     verifying --> building: checks fail (loop)
     reviewing --> integrating: review passes
     reviewing --> building: review fails (loop)
-    integrating --> pr_open: PR opened into base (forge never merges)
+    integrating --> pr_open: PR opened into base (no integration branch)
+    integrating --> merged: merged into the configured integration branch
+    merged --> done: a human merges the roll-up PR into the base
     pr_open --> done: a human merges the PR on the host
     done --> [*]
 
@@ -192,21 +400,32 @@ stateDiagram-v2
 | `plan_gate`   | `planning`    | Human requested changes; re-plan                      | 2       |
 | `building`    | `verifying`   | Build complete (branch + commits exist)              | 1, 2    |
 | `verifying`   | `reviewing`   | Acceptance criteria checks pass                       | 1, 2    |
+| `verifying`   | `integrating` | Checks pass and the `fast` profile skipped review (diff under `review_threshold_lines`) | 1, 2 |
 | `verifying`   | `building`    | Checks fail; loop back to build                       | 1, 2    |
 | `reviewing`   | `integrating` | Review passes                                         | 1, 2    |
 | `reviewing`   | `building`    | Review fails; loop back to build                      | 1, 2    |
-| `integrating` | `pr_open`     | PR opened into the base branch (forge never merges)   | 1, 2    |
+| `integrating` | `pr_open`     | PR opened into the base branch (no integration branch configured) | 1, 2 |
+| `integrating` | `merged`      | Branch merged into the configured `integration_branch`; one roll-up PR targets the base | 1, 2 |
 | `pr_open`     | `done`        | A human merges the PR on the host (forge does not poll)| 1, 2    |
+| `merged`      | `done`        | A human merges the roll-up integration PR into the base | 1, 2  |
 | any phase     | `blocked`     | Needs a human decision, credential, or access         | 0, 1, 2 |
 | `blocked`     | active phase  | Human unblocked; resume the phase it paused in        | 0, 1, 2 |
 | any phase     | `failed`      | Unrecoverable error                                   | 0, 1, 2 |
 
 `done` and `failed` are terminal. `blocked` is a resumable pause, not terminal.
-`pr_open` is the parked end state for tiers 1-2: **forge never merges**. The
-integrate phase opens a PR into the base branch and stops there; a human reviews
-and merges it on the host. forge does not poll for the merge, so for code tasks
-`pr_open` is where a forge run ends; only tier-0 tasks reach `done` (their report
-is written).
+
+For code tasks the run parks at one of two end states, decided by whether the
+project configured an `integration_branch`:
+
+- **`pr_open` (default).** **Forge merges nothing.** Integrate opens a PR into
+  the base branch and stops; a human reviews and merges it on the host. Forge
+  does not poll for that merge, so this is where the run ends.
+- **`merged`.** The task's branch was merged into the configured integration
+  branch, and a single roll-up PR from that branch targets the base. Forge still
+  never merges into the base itself - a human reviews that one PR. See
+  [project-config.md](project-config.md#the-integration-branch).
+
+Only tier-0 tasks reach `done` directly (their report is written).
 
 ### Tier behavior summary
 
@@ -214,10 +433,13 @@ is written).
   integrate, no verify/review. The artifact is `report.md`, grounded in the
   `acceptance_criteria`.
 - **Tier 1 (default):** full path `pending -> planning -> building -> verifying
-  -> reviewing -> integrating -> pr_open`. Opens a PR into base and parks at
-  `pr_open`; a human reviews and merges it on the host.
+  -> reviewing -> integrating -> pr_open` (or `-> merged` with an integration
+  branch configured). A human reviews and merges on the host either way.
 - **Tier 2 (gated):** as tier 1, with `planning -> plan_gate -> building` so a
   human approves the plan before any code is written.
+
+The tier decides which of these paths a task takes; the [profile](#profiles)
+decides which phases run along it.
 
 ---
 
@@ -306,3 +528,6 @@ validator, and queue format.
 - [`examples/`](../examples/) - example specs (tier-1 fix, tier-0 audit, tier-2 build).
 - [`scripts/validate-task.sh`](../scripts/validate-task.sh) - frontmatter validator.
 - [`scripts/ingest-files.sh`](../scripts/ingest-files.sh) - reference file ingester.
+- [`scripts/forge-phase-gate.sh`](../scripts/forge-phase-gate.sh) - the artifact gate; also stamps the context cache after intake.
+- [`scripts/forge-context-cache.sh`](../scripts/forge-context-cache.sh) - stamps and checks the context brief's invalidation set.
+- [`scripts/check-conflicts.sh`](../scripts/check-conflicts.sh) - post-run overlap check across open forge PRs.

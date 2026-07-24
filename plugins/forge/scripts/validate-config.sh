@@ -6,10 +6,11 @@
 # Checks (errors fail the run, non-zero exit):
 #   - required fields present (version, base_branch, vcs.host, commands.test)
 #   - version == 1
-#   - enum values: vcs.host, vcs.cli, autonomy.default_tier, task types in
-#     autonomy.require_gate, budget.models phase keys
+#   - enum values: profile, vcs.host, vcs.cli, autonomy.default_tier, task types
+#     in autonomy.require_gate, budget.models phase keys
 #   - protected_branches, review_lenses well-formed when present
 #   - budget.max_attempts a positive integer when present
+#   - review_threshold_lines a non-negative integer when present
 # Warnings (do NOT fail):
 #   - commands.test empty (verify needs it for any code-changing task)
 #   - a phase model set to opus (reserved for explicit tier-2 overrides)
@@ -108,6 +109,18 @@ elif cfg["version"] != 1:
 if not cfg.get("base_branch"):
     errors.append("missing required field: base_branch")
 
+# profile (default pipeline shape for tasks that do not set their own)
+if "profile" in cfg:
+    profiles = props.get("profile", {}).get("enum", ["fast", "standard", "audit"])
+    if cfg["profile"] not in profiles:
+        errors.append("profile must be one of %s (got %r)" % (profiles, cfg["profile"]))
+
+# review_threshold_lines (consulted by fast-profile tasks, whatever the repo default)
+if "review_threshold_lines" in cfg:
+    rtl = cfg["review_threshold_lines"]
+    if not isinstance(rtl, int) or isinstance(rtl, bool) or rtl < 0:
+        errors.append("review_threshold_lines must be an integer >= 0 (got %r)" % rtl)
+
 # vcs
 vcs = cfg.get("vcs")
 if not isinstance(vcs, dict) or not vcs.get("host"):
@@ -142,6 +155,29 @@ if pb is not None:
     if (not isinstance(pb, list) or not pb
             or not all(isinstance(x, str) and x.strip() for x in pb)):
         errors.append("protected_branches must be a non-empty list of strings")
+
+# integration_branch (the one branch forge may merge into)
+ib = cfg.get("integration_branch")
+if ib is not None:
+    if not isinstance(ib, str) or not ib.strip():
+        errors.append("integration_branch must be a non-empty string")
+    elif ib in ("main", "master"):
+        errors.append("integration_branch must not be %r; forge merges into it "
+                      "unreviewed, so it has to be a disposable branch" % ib)
+    elif isinstance(pb, list) and ib in pb:
+        errors.append("integration_branch %r is also in protected_branches; the "
+                      "guardrail would refuse every merge into it" % ib)
+    elif ib == cfg.get("base_branch"):
+        errors.append("integration_branch must not equal base_branch (%r); forge "
+                      "would merge straight into the branch a human is meant to "
+                      "review" % ib)
+
+# surfaces
+sf = cfg.get("surfaces")
+if sf is not None:
+    if (not isinstance(sf, list) or not sf
+            or not all(isinstance(x, str) and x.strip() for x in sf)):
+        errors.append("surfaces must be a non-empty list of strings")
 
 # review_lenses
 rl = cfg.get("review_lenses")
@@ -180,7 +216,7 @@ if "max_attempts" in budget:
 models = budget.get("models") or {}
 phases = list(props.get("budget", {}).get("properties", {})
               .get("models", {}).get("properties", {}).keys()) \
-    or ["intake", "plan", "build", "verify", "review", "integrate", "report"]
+    or ["intake", "plan", "build", "verify", "review", "integrate", "report", "gate"]
 if isinstance(models, dict):
     for ph, mv in models.items():
         if ph not in phases:

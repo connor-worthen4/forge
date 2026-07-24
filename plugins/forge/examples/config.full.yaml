@@ -7,10 +7,32 @@ version: 1
 # Default branch feature branches are cut from and PRs target.
 base_branch: develop
 
+# Default pipeline shape for tasks that do not set their own `profile`.
+#   fast     - plan, build, verify, integrate. Skips intake when the spec already
+#              states acceptance criteria, and review when the diff is small.
+#   standard - the full intake, plan, build, verify, review, integrate pipeline.
+#   audit    - read-only intake, plan, report. No branch, no PR.
+profile: standard
+
+# Fast profile only: skip review when the branch diff changes fewer than this
+# many lines. Compared against the diff_lines forge-checks.sh measures. Use 0 to
+# review every fast-profile task regardless of size.
+review_threshold_lines: 400
+
 # Source of truth for the git guardrail's protected list. The guardrail hook
-# reads this first (relative to cwd), then FORGE_PROTECTED_BRANCHES, then its
-# built-in default of [main, master, develop].
+# reads this first, then FORGE_PROTECTED_BRANCHES, then its built-in default of
+# [main, master, develop]. Narrowing this list is a real loosening: a branch left
+# out becomes pushable by forge agents. GitHub branch protection is the backstop.
 protected_branches: [main, master, develop]
+
+# Opt-in. The ONE branch forge may merge into. With it set, integrate merges each
+# verified task branch here and keeps a single open PR from it into the base, so
+# overnight tasks compound on one branch and conflicts are resolved somewhere
+# disposable - leaving one PR to review in the morning. Those tasks finish at
+# `merged` rather than `pr_open`. It must not be main/master, must not equal
+# base_branch, and must not appear in protected_branches. Omit it (the default)
+# and forge never merges anything.
+# integration_branch: forge/integration
 
 vcs:
   host: github          # github | gitlab
@@ -29,6 +51,13 @@ autonomy:
   default_tier: 1         # 0 read-only | 1 branch+PR | 2 gated
   require_gate: [build]   # task types forced to tier-2 plan approval (park at plan_gate)
 
+# The areas of this system a task spec may name in its `surface` field. Tasks
+# sharing a surface run serially and stacked (each branching off the previous
+# one's branch); different surfaces run in parallel, one git worktree per task.
+# Declaring the list makes a typo'd surface fail the run instead of silently
+# becoming its own group. Omit to allow any surface string.
+surfaces: [schema, auth, api, ui-shell, profile, products]
+
 # Optional. Turn the review phase into a parallel fan-out: one reviewer per lens,
 # then a synth pass that consolidates their findings into review.md. Omit this
 # key for a single review agent.
@@ -44,4 +73,5 @@ budget:
     review: sonnet
     integrate: haiku
     report: haiku
+    gate: haiku         # the artifact gate runs one script and reports its JSON; haiku is the default
     # opus is reserved for explicit tier-2 overrides, never a phase default at this budget.

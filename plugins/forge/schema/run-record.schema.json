@@ -29,6 +29,7 @@
         "reviewing",
         "integrating",
         "pr_open",
+        "merged",
         "done",
         "blocked",
         "failed"
@@ -73,6 +74,7 @@
         "intake": { "type": "string" },
         "plan": { "type": "string" },
         "diff": { "type": "string" },
+        "checks": { "type": "string" },
         "verdict": { "type": "string" },
         "review": { "type": "string" },
         "report": { "type": "string" },

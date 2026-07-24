@@ -149,6 +149,23 @@ Keep every Context-map, Repo-context-source, and Constraints entry backed by a
 `path:line`, a skill/file name, or a command you ran. State empty sections
 explicitly rather than omitting them.
 
+## Your citations are the brief's cache key
+
+The brief is cached across runs: a later run reuses it instead of paying for
+intake again, but only while the files it cites still hold. As soon as you file
+the brief, the pipeline stamps `context-cache.json` for you (via
+`scripts/forge-phase-gate.sh`), recording the content hash of every repo file
+your brief cites. A later run re-hashes them and re-runs intake the moment one
+changes, disappears, or the brief itself is edited - so a stale map can never
+send plan and build to `path:line` references that no longer hold.
+
+You do not run the stamp yourself. What you control is what gets stamped, and
+that is why citing precisely matters beyond readability: **the paths you cite ARE
+the cache's invalidation set.** A file that genuinely bears on the task but is
+never cited will not invalidate the brief when it changes, and a later run will
+happily reuse a map that has rotted underneath it. Cite every file the task
+actually turns on.
+
 ## The result you return
 
 - Proceed (spec/goal is actionable, context located or assumptions stated):

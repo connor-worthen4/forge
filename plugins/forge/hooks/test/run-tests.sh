@@ -194,5 +194,53 @@ run_env "FORGE_PROTECTED_BRANCHES=staging" DENY  "$REPO_CFG"  'git push origin r
 run_env "FORGE_PROTECTED_BRANCHES=staging" ALLOW "$REPO_CFG"  'git push origin staging'
 
 echo
+echo "Integration branch: the one merge exception, and only where it applies:"
+# A repo configured with integration_branch, sitting ON that branch.
+REPO_INT="$TMP/int"; mkrepo "$REPO_INT" "forge/integration"
+mkdir -p "$REPO_INT/.forge"
+cat > "$REPO_INT/.forge/config.yaml" <<'YAML'
+version: 1
+base_branch: develop
+protected_branches: [main]
+integration_branch: forge/integration
+vcs:
+  host: github
+commands:
+  test: "true"
+YAML
+# The same config, but checked out on a task branch instead.
+REPO_INT_FEAT="$TMP/intfeat"; mkrepo "$REPO_INT_FEAT" "forge/fix/thing"
+mkdir -p "$REPO_INT_FEAT/.forge"
+cp "$REPO_INT/.forge/config.yaml" "$REPO_INT_FEAT/.forge/config.yaml"
+# A misconfiguration: the integration branch is also in protected_branches.
+REPO_INT_PROT="$TMP/intprot"; mkrepo "$REPO_INT_PROT" "forge/integration"
+mkdir -p "$REPO_INT_PROT/.forge"
+cat > "$REPO_INT_PROT/.forge/config.yaml" <<'YAML'
+version: 1
+base_branch: develop
+protected_branches: [main, forge/integration]
+integration_branch: forge/integration
+vcs:
+  host: github
+commands:
+  test: "true"
+YAML
+
+run ALLOW "$REPO_INT"      'git merge forge/fix/thing'         # on the integration branch
+run ALLOW "$REPO_INT"      'git merge --no-ff forge/fix/thing' # same, explicit merge commit
+run ALLOW "$REPO_INT"      'git push origin forge/integration' # not protected -> pushable
+run DENY  "$REPO_INT"      'git push origin main'              # still protected
+run DENY  "$REPO_INT"      'git push -f origin forge/integration'  # force is never allowed
+run DENY  "$REPO_INT_FEAT" 'git merge forge/fix/other'         # not ON the integration branch
+run DENY  "$REPO_INT_PROT" 'git merge forge/fix/thing'         # protected wins over the exception
+run DENY  "$REPO_CFG"      'git merge feature'                 # no integration_branch configured
+run DENY  "$REPO_INT"      'gh pr merge 12'                    # the exception is git merge only
+run DENY  "$REPO_INT"      'git merge forge/fix/thing && git push origin main'  # chained push still blocks
+# Scoping protected_branches is a real loosening, so pin the consequence: a base
+# branch left OUT of the list is pushable. Narrow the list deliberately, not by
+# accident - GitHub branch protection remains the backstop either way.
+run ALLOW "$REPO_INT"      'git push origin develop'           # develop not in [main] -> allowed
+
+echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

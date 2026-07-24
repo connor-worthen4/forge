@@ -70,6 +70,12 @@ if none>
 
 ## The result you return
 
+`report.md` IS the deliverable of a tier-0 task - there is no branch, no diff and
+no PR behind it, so a report that exists only in your reply is a run that produced
+nothing. Confirm the file is written before you return `ok`; the pipeline checks
+the run dir after you and parks the task blocked if it is not there. If the write
+fails or is refused, return `fail` with the exact error rather than `ok`.
+
 - Report filed (all questions answered or explicitly marked undetermined):
   `{"status":"ok","next_phase":null,"artifacts":["report.md"],"blocked_reason":null}`
   `next_phase` is null: report is terminal; the task is done.

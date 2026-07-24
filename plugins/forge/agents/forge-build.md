@@ -51,8 +51,19 @@ passed; do not argue with the verdict in code comments.
 
 ### 2. Get on the task branch
 
-The branch name is given in your context (shape `forge/<type>/<id>-<slug>`); the
-base is the spec's `base_branch`, else config, else `develop`.
+The branch name is given in your context (shape `forge/<type>/<id>-<slug>`). The
+base you cut from is, in order: the `STACKED` branch named in your context if one
+is present, else the spec's `base_branch`, else config, else the `Base branch` in
+your context.
+
+- If your context marks this task `STACKED` on another branch, that branch is
+  your base: cut from it so its commits are already in your history. This is how
+  forge keeps two tasks on the same surface from colliding - you build on top of
+  the earlier task's work instead of branching beside it, so the diffs stay
+  linear. Never revert or reimplement what the predecessor did.
+- If your context names a `WORKTREE`, run the `forge-worktree.sh add` command it
+  gives you and work in the path it prints. Other tasks are running concurrently
+  and the main checkout belongs to one of them.
 
 - If the branch already exists locally, check it out and continue the work in
   progress (phases are idempotent; read `git status` and `git log <base>..HEAD`
