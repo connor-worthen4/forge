@@ -131,7 +131,7 @@ produces in the same directory:
     <task-id>/
       run.json                    # the run record (this object)
       context-brief.md            # produced by intake
-      context-cache.json          # produced by intake (forge-context-cache.sh: the brief's invalidation set)
+      context-cache.json          # stamped after intake by the artifact gate (the brief's invalidation set)
       plan.md                     # produced by plan
       diff.patch                  # produced by build
       checks.json                 # produced by verify (forge-checks.sh: recorded command results)
@@ -182,6 +182,50 @@ persists only the **terminal or parked** state to `run.json` (via
 `reviewing`/`integrating` values remain part of the contract for tooling and
 crash inspection.
 
+### The artifact gate
+
+Every phase reports its own outcome, including the artifacts it claims to have
+filed. The forge-run workflow runs in a sandbox with no filesystem access, so
+that self-report used to be the only evidence there was - and a claim is not a
+file. A write that was blocked by a tool guard, refused, or simply never
+attempted still comes back as `status: ok` with an `artifacts` list, and the
+pipeline advances on a brief, plan, or report that is not on disk.
+
+So each phase that reports success is followed by a **gate**: a minimal agent
+(`agents/forge-gate.md`, Bash only) that runs
+[`scripts/forge-phase-gate.sh`](../scripts/forge-phase-gate.sh) and does nothing
+else. The script is the one step in the pipeline that actually looks at the run
+dir. It checks that phase's expected artifacts:
+
+| Phase | Must have filed |
+| ----- | --------------- |
+| `intake` | `context-brief.md` |
+| `plan` | `plan.md` |
+| `build` | `diff.patch` |
+| `verify` | `checks.json`, `verify.md` |
+| `review` | `review.md` |
+| `integrate` | `pr.json` |
+| `report` | `report.md` |
+
+An artifact counts as filed only when it exists and is non-empty - a zero-byte
+`plan.md` is a failed write, not a plan. A phase that claims work it did not file
+parks the task **`blocked`**, naming the missing file, rather than carrying the
+claim forward. It is deliberately not `failed`-and-retried: a missing artifact is
+not evidence the code is wrong, so retrying build would burn an attempt on the
+wrong problem.
+
+Two deliberate non-failures:
+
+- If the gate agent itself never runs, the pipeline logs it and advances. The
+  gate cannot distinguish "artifact missing" from "checker died", and throwing
+  away finished work because the checker broke is the worse outcome.
+- A failed context-cache stamp (below) does not fail the gate. The cache is an
+  optimization; losing it only means the next run redoes intake.
+
+The gate is also where `context-cache.json` gets stamped after a successful
+intake, so the cache is a property of the pipeline rather than of the intake
+agent remembering to run one more command.
+
 ### Surfaces
 
 A **surface** is the area of the system a task changes - `schema`, `auth`, `api`,
@@ -217,6 +261,32 @@ With that list set, a spec naming a surface outside it fails the run instead of
 silently becoming its own group - which would look like it worked while removing
 the very collision protection it asked for.
 
+#### A surface is a declaration, not overlap detection
+
+Forge does not infer surfaces, and it does not check whether two tasks are about
+to edit the same file before running them in parallel. `surface` is a claim the
+spec makes about where the work lives, and the parallelism follows from that
+claim. **Label two tasks with different surfaces and forge will run them in
+parallel even if they both end up editing the same file** - for example two
+"independent" tasks that each add cases to the same test file. That is the design:
+the labels are yours to get right, and forge treats them as the contract.
+
+Two safety nets sit on either side of the run, neither of which is the surface
+label itself:
+
+- **Before**: `/forge:draft` builds a `file -> [task ids]` map while it writes the
+  specs and resolves any overlap it finds - by merging the tasks, by `depends_on`,
+  or by putting them on the same surface so they stack.
+- **After**: `scripts/check-conflicts.sh` compares the open forge PRs and reports
+  branches that are each clean against the base yet collide with a sibling on
+  sequential merge.
+
+So the practical rule: a surface should name the area of the system a task
+*touches*, not the feature it *delivers*. When two tasks plausibly reach the same
+files, give them the same surface (they stack, cheaply and linearly) rather than
+different ones. An over-broad surface costs you serialization; an over-narrow one
+costs you a merge conflict.
+
 #### Worktrees
 
 Two tasks cannot both have a branch checked out in one working tree, so a run
@@ -241,16 +311,18 @@ is a resumable pause, and that tree is where the work is inspected and resumed.
 constraints are. Plan, build, review, and report all read it instead of
 re-deriving the codebase cold, so it is written once and reused.
 
-Reuse is safe only because invalidation is content-based. Intake finishes by
-stamping the brief:
+Reuse is safe only because invalidation is content-based. Once intake files the
+brief, the [artifact gate](#the-artifact-gate) stamps it:
 
 ```
 scripts/forge-context-cache.sh stamp --run-dir .forge/runs/<task-id>
 ```
 
 That extracts every repo file the brief cites and records each one's
-`git hash-object` into `context-cache.json`. On the next run the launcher checks
-it:
+`git hash-object` into `context-cache.json`. The stamp runs from the pipeline, not
+from the intake agent: a step the model has to remember is a step that silently
+does not happen, and an unstamped brief looks exactly like a working cache that
+never hits. On the next run the launcher checks it:
 
 ```
 scripts/forge-context-cache.sh check --run-dir .forge/runs/<task-id>
@@ -456,3 +528,6 @@ validator, and queue format.
 - [`examples/`](../examples/) - example specs (tier-1 fix, tier-0 audit, tier-2 build).
 - [`scripts/validate-task.sh`](../scripts/validate-task.sh) - frontmatter validator.
 - [`scripts/ingest-files.sh`](../scripts/ingest-files.sh) - reference file ingester.
+- [`scripts/forge-phase-gate.sh`](../scripts/forge-phase-gate.sh) - the artifact gate; also stamps the context cache after intake.
+- [`scripts/forge-context-cache.sh`](../scripts/forge-context-cache.sh) - stamps and checks the context brief's invalidation set.
+- [`scripts/check-conflicts.sh`](../scripts/check-conflicts.sh) - post-run overlap check across open forge PRs.

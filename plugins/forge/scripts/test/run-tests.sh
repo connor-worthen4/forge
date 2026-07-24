@@ -537,6 +537,83 @@ assert_eq "0" "$(cache_fresh)" "a missing cache is stale, never an error"
 rm -rf "$CTX"
 
 echo
+echo "the phase gate checks artifacts actually landed and stamps the context cache:"
+GTMPD="$(mktemp -d)"
+git -C "$GTMPD" init -q -b develop
+git -C "$GTMPD" config user.email tester@forge.test
+git -C "$GTMPD" config user.name "forge tester"
+mkdir -p "$GTMPD/src" "$GTMPD/tasks" "$GTMPD/.forge/runs/fix-gate000001"
+printf 'export const a = 1\n' > "$GTMPD/src/api.ts"
+git -C "$GTMPD" add -A && git -C "$GTMPD" commit -qm base
+GATE="$SCRIPTS_DIR/forge-phase-gate.sh"
+GRUN="$GTMPD/.forge/runs/fix-gate000001"
+GOUT="$GTMPD/gate.json"
+cat > "$GTMPD/tasks/fix-gate000001.md" <<'SPEC'
+---
+id: fix-gate000001
+title: Phase gate fixture
+type: fix
+autonomy_tier: 1
+acceptance_criteria:
+  - does a thing
+---
+Body.
+SPEC
+
+# gate <phase> [extra args...] -> writes the JSON verdict to $GOUT, returns its
+# exit status. The verdict cannot come back on stdout: a command substitution
+# would run it in a subshell and its exit status is the whole point here.
+gate() {
+  local phase="$1"; shift
+  FORGE_TARGET_REPO="$GTMPD" bash "$GATE" "$phase" \
+    --run-dir "$GRUN" --repo "$GTMPD" "$@" > "$GOUT" 2>/dev/null
+}
+
+# A phase that claims success but filed nothing is caught, not believed.
+gate intake; st=$?
+assert_eq "1" "$st" "a missing artifact fails the gate"
+assert_eq "false" "$(jq -r .ok "$GOUT")" "the verdict says not ok"
+assert_eq '["context-brief.md"]' "$(jq -c .missing "$GOUT")" "the verdict names the missing artifact"
+
+# A zero-byte file is a failed write, not an artifact.
+: > "$GRUN/context-brief.md"
+gate intake; st=$?
+assert_eq "1" "$st" "an empty artifact still fails the gate"
+
+# A real brief passes and gets stamped by the gate, with no agent involved.
+printf '# Context brief\n\n- `src/api.ts:1` - the entry point\n' > "$GRUN/context-brief.md"
+gate intake; st=$?
+assert_eq "0" "$st" "a filed artifact passes the gate"
+assert_eq "true" "$(jq -r .ok "$GOUT")" "the verdict says ok"
+assert_eq "true" "$(jq -r .stamped "$GOUT")" "the gate stamps the context cache after intake"
+assert_eq '["src/api.ts"]' "$(jq -c '[.files[].path]' "$GRUN/context-cache.json")" \
+  "the stamp records the brief's cited files"
+assert_eq "True" \
+  "$(FORGE_TARGET_REPO="$GTMPD" bash "$SCRIPTS_DIR/forge-context.sh" fix-gate000001 2>/dev/null \
+     | python3 -c 'import sys, json; print(json.load(sys.stdin)["tasks"][0]["contextCacheFresh"])')" \
+  "the gate's stamp is what makes the next run reuse the brief"
+
+# Only intake stamps; a multi-artifact phase reports exactly what is absent.
+printf '{}\n' > "$GRUN/checks.json"
+gate verify; st=$?
+assert_eq "1" "$st" "a partially filed phase fails the gate"
+assert_eq '["verify.md"]' "$(jq -c .missing "$GOUT")" "only the absent artifact is reported"
+assert_eq '["checks.json"]' "$(jq -c .present "$GOUT")" "the filed artifact is reported present"
+assert_eq "null" "$(jq -r .stamped "$GOUT")" "only intake stamps the context cache"
+
+# The cache is an optimization: failing to stamp must not fail the gate.
+gate intake --repo "$GTMPD/not-a-directory"; st=$?
+assert_eq "0" "$st" "a failed stamp does not fail the gate"
+assert_eq "false" "$(jq -r .stamped "$GOUT")" "the failed stamp is reported, not hidden"
+
+# An unknown phase is a usage error, never a silent pass.
+FORGE_TARGET_REPO="$GTMPD" bash "$GATE" bogus --run-dir "$GRUN" >/dev/null 2>&1
+assert_eq "2" "$?" "an unknown phase is a usage error"
+FORGE_TARGET_REPO="$GTMPD" bash "$GATE" intake >/dev/null 2>&1
+assert_eq "2" "$?" "a missing --run-dir is a usage error"
+rm -rf "$GTMPD"
+
+echo
 echo "forge-checks records the diff size the fast profile's review skip depends on:"
 DLTMP="$(mktemp -d)"
 git -C "$DLTMP" init -q -b develop

@@ -127,7 +127,7 @@
         "models": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Phase -> model. Overrides the model the phase agent runs on; omit to inherit the session model.",
+          "description": "Phase -> model. Overrides the model the phase agent runs on; omit to inherit the session model (except `gate`, which defaults to haiku).",
           "properties": {
             "intake": { "$ref": "#/$defs/modelRef" },
             "plan": { "$ref": "#/$defs/modelRef" },
@@ -135,7 +135,8 @@
             "verify": { "$ref": "#/$defs/modelRef" },
             "review": { "$ref": "#/$defs/modelRef" },
             "integrate": { "$ref": "#/$defs/modelRef" },
-            "report": { "$ref": "#/$defs/modelRef" }
+            "report": { "$ref": "#/$defs/modelRef" },
+            "gate": { "$ref": "#/$defs/modelRef" }
           }
         }
       }

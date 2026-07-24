@@ -118,6 +118,11 @@ typo'd surface fail the run rather than silently becoming its own group - which
 would look fine while quietly removing the collision protection the spec asked
 for. Omit the key to allow any surface string.
 
+The list constrains the *vocabulary*, not the truth of the label. Forge never
+infers a surface or checks for file overlap before running: two tasks on
+different surfaces run in parallel even if they turn out to edit the same file.
+Keep the names coarse enough that tasks touching the same code share one.
+
 The full contract is in [task-spec.md](task-spec.md#surfaces).
 
 ### `review_lenses`
@@ -178,6 +183,11 @@ reasoning ones; an unmapped phase inherits the session model:
 intake: haiku    plan: sonnet    build: sonnet    verify: haiku
 review: sonnet   integrate: haiku                 report: haiku
 ```
+
+`gate` is the one exception to "unmapped inherits the session model": the
+[artifact gate](task-spec.md#the-artifact-gate) runs a single script and returns
+its JSON, so it defaults to `haiku` regardless of the session model. Map it
+explicitly to override that.
 
 `opus` is reserved for explicit tier-2 overrides and should rarely be a phase
 default. `validate-config.sh` warns if any phase model is `opus`.

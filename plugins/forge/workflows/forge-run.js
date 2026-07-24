@@ -11,6 +11,13 @@
 // artifacts and write their own artifact into the run dir. After this workflow
 // returns, the launcher stamps queue.json / run.json from the returned results.
 //
+// Because the workflow cannot see the disk, every phase's `ok` is a self-report.
+// So each successful phase is followed by an artifact GATE - a minimal agent that
+// runs scripts/forge-phase-gate.sh and does nothing else - which confirms the
+// phase's artifacts actually landed before the pipeline advances, and stamps the
+// context cache after intake. A phase that claims work it did not file parks the
+// task blocked instead of carrying the claim forward.
+//
 // args shape (assembled by the launcher):
 //   {
 //     pluginRoot, repoRoot,
@@ -65,6 +72,20 @@ const RESULT = {
     // The integration branch integrate merged this task into, when the project
     // configured one. Null in the default PR mode, where nothing is merged.
     merged_into: { type: ['string', 'null'] },
+  },
+}
+
+// The artifact gate's contract: a phase's artifacts either landed on disk or
+// they did not. No status, no next phase - the gate reports a fact, and the
+// workflow decides what it means.
+const GATE = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['ok', 'missing', 'detail'],
+  properties: {
+    ok: { type: 'boolean' },
+    missing: { type: 'array', items: { type: 'string' } },
+    detail: { type: ['string', 'null'] },
   },
 }
 
@@ -210,6 +231,63 @@ function runPhase(phase, task, tier, attempt, note) {
   )
 }
 
+// Every phase reports its own outcome, and until this gate the workflow believed
+// it: a phase whose artifact write silently failed still returned `ok` with an
+// `artifacts` list, and the pipeline advanced on a brief, plan, or report that was
+// never on disk. forge-phase-gate.sh is the only step here that actually looks. It
+// also stamps the context cache after intake, so that stamp is a property of the
+// pipeline rather than of the intake model remembering to run one more command.
+// Returns null when the phase is clean, or the failure reason when it is not.
+async function gatePhase(phase, task) {
+  // --repo is the main checkout even when the task works in its own worktree: the
+  // launcher checks the context cache against that same tree on the next run, and
+  // a stamp taken against a different tree would make freshness meaningless.
+  const cmd =
+    `bash "${args.pluginRoot}/scripts/forge-phase-gate.sh" ${phase} ` +
+    `--run-dir "${task.runDir}" --repo "${args.repoRoot}"`
+  const opts = { label: `gate:${phase}:${task.taskId}`, phase, agentType: `${AGENT_NS}forge-gate`, schema: GATE }
+  // The gate runs one command and returns its JSON, so the cheapest model is the
+  // right one; an explicit budget.models.gate still wins.
+  opts.model = models.gate || 'haiku'
+  const g = await agent(
+    `Run exactly this command, once, and nothing else:\n\n  ${cmd}\n\n` +
+      `Then return the result object built from the JSON it printed. Do not create, edit, or ` +
+      `repair any file, and do not judge what the artifacts contain.`,
+    opts,
+  )
+  // A gate that never ran tells us nothing - it cannot distinguish a missing
+  // artifact from a checker that died - so an absent result warns and passes.
+  // Throwing away finished work because the checker broke is the worse failure.
+  if (!g) {
+    log(`forge: ${task.taskId} ${phase} artifact gate did not run; advancing unchecked`)
+    return null
+  }
+  if (g.ok) return null
+  const missing = (g.missing || []).join(', ') || 'its artifacts'
+  return (
+    `${phase} reported success but did not file ${missing} in the run dir` +
+    (g.detail ? ` (${g.detail})` : '')
+  )
+}
+
+// A phase result plus the gate's verdict on it. A phase that did not report ok is
+// already handled by the caller, so only success is gated. A gate failure becomes
+// `blocked` rather than `fail`: a missing artifact is not evidence the code is
+// wrong, so retrying build would burn an attempt on the wrong problem - a human
+// needs to see that a phase claimed work it did not file.
+async function gated(phase, task, result) {
+  if (!ok(result)) return result
+  const failure = await gatePhase(phase, task)
+  if (!failure) return result
+  log(`forge: ${task.taskId} ${failure}`)
+  return { ...result, status: 'blocked', next_phase: null, blocked_reason: failure }
+}
+
+// The normal way to run a phase: do the work, then confirm the work was filed.
+async function runGatedPhase(phase, task, tier, attempt, note) {
+  return gated(phase, task, await runPhase(phase, task, tier, attempt, note))
+}
+
 // Under the fast profile verify is the script's verdict, not a model's:
 // forge-checks.sh runs the configured commands and its `overall` maps straight
 // through. The per-criterion grading pass is exactly the ceremony this profile
@@ -288,12 +366,15 @@ async function runTask(task) {
   // investigation -> report -> done.
   if (tier === 0) {
     if (startPhase === 'intake') {
-      const i = await runPhase('intake', task, tier, 1)
+      const i = await runGatedPhase('intake', task, tier, 1)
       if (!ok(i)) return endNonOk(out, i, 'intake')
     }
-    const p = await runPhase('plan', task, tier, 1)
+    const p = await runGatedPhase('plan', task, tier, 1)
     if (!ok(p)) return endNonOk(out, p, 'plan')
-    const r = await runPhase('report', task, tier, 1)
+    // report.md IS the deliverable of a tier-0 task: there is no branch, no diff,
+    // and no PR to fall back on, so an unfiled report means the run produced
+    // nothing at all. `done` here has to mean the file is on disk.
+    const r = await runGatedPhase('report', task, tier, 1)
     if (!ok(r)) return endNonOk(out, r, 'report')
     out.final = 'done'
     out.phase = 'report'
@@ -304,10 +385,10 @@ async function runTask(task) {
   // tier-2 task parks at the plan gate after plan and waits for /forge:approve.
   if (startPhase === 'intake' || startPhase === 'plan') {
     if (startPhase === 'intake') {
-      const i = await runPhase('intake', task, tier, 1)
+      const i = await runGatedPhase('intake', task, tier, 1)
       if (!ok(i)) return endNonOk(out, i, 'intake')
     }
-    const p = await runPhase('plan', task, tier, 1)
+    const p = await runGatedPhase('plan', task, tier, 1)
     if (!ok(p)) return endNonOk(out, p, 'plan')
     if (tier === 2 && !task.approved) {
       out.final = 'plan_gate'
@@ -318,10 +399,10 @@ async function runTask(task) {
 
   let attempt = 1
   while (true) {
-    const b = await runPhase('build', task, tier, attempt)
+    const b = await runGatedPhase('build', task, tier, attempt)
     if (!ok(b)) return endNonOk(out, b, 'build')
 
-    const v = await runPhase('verify', task, tier, attempt, profile === 'fast' ? SCRIPT_VERIFY_NOTE : null)
+    const v = await runGatedPhase('verify', task, tier, attempt, profile === 'fast' ? SCRIPT_VERIFY_NOTE : null)
     if (isBlocked(v)) return park(out, v, 'verify')
     if (!ok(v)) {
       if (++attempt > maxAttempts) return park(out, v, 'verify', `verify failed; max_attempts (${maxAttempts}) reached`)
@@ -338,7 +419,7 @@ async function runTask(task) {
       break
     }
 
-    const r = await runReview(task, tier, attempt)
+    const r = await gated('review', task, await runReview(task, tier, attempt))
     if (isBlocked(r)) return park(out, r, 'review')
     if (!ok(r)) {
       if (++attempt > maxAttempts) return park(out, r, 'review', `review failed; max_attempts (${maxAttempts}) reached`)
@@ -347,7 +428,7 @@ async function runTask(task) {
     break
   }
 
-  const g = await runPhase('integrate', task, tier, attempt)
+  const g = await runGatedPhase('integrate', task, tier, attempt)
   if (!ok(g)) return endNonOk(out, g, 'integrate')
   out.phase = 'integrate'
   out.prUrl = (g && g.pr_url) || null
@@ -429,7 +510,7 @@ async function runGroup(group) {
 const groupOrder = []
 const groupsBySurface = new Map()
 for (const task of tasks) {
-  const key = task.surface || ` solo:${task.taskId}`
+  const key = task.surface || `\0solo:${task.taskId}`
   if (!groupsBySurface.has(key)) {
     groupsBySurface.set(key, { surface: task.surface || null, tasks: [] })
     groupOrder.push(key)

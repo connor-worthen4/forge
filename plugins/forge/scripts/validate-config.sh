@@ -216,7 +216,7 @@ if "max_attempts" in budget:
 models = budget.get("models") or {}
 phases = list(props.get("budget", {}).get("properties", {})
               .get("models", {}).get("properties", {}).keys()) \
-    or ["intake", "plan", "build", "verify", "review", "integrate", "report"]
+    or ["intake", "plan", "build", "verify", "review", "integrate", "report", "gate"]
 if isinstance(models, dict):
     for ph, mv in models.items():
         if ph not in phases:
